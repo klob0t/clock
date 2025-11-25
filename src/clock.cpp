@@ -5,6 +5,8 @@
 #include <DS3232RTC.h>  // <--- Library Include
 #include <TimeLib.h>    // <--- Time Library
 #include "BitPotionFont.h"
+#include "MilfordFont.h"
+#include "WeatherFont.h"
 
 // --- CONFIG ---
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
@@ -81,18 +83,18 @@ int      currentFrame = 0;
 
 void drawRawBitmap(int startCol, uint64_t image) {
   uint8_t rows[4];
-  rows[0] = (image >> 24) & 0xFF; 
-  rows[1] = (image >> 16) & 0xFF;
-  rows[2] = (image >> 8)  & 0xFF;
-  rows[3] = (image >> 0)  & 0xFF; 
+  rows[3] = (image >> 24) & 0xFF; 
+  rows[4] = (image >> 16) & 0xFF;
+  rows[5] = (image >> 8)  & 0xFF;
+  rows[6] = (image >> 0)  & 0xFF; 
 
   for (int col = 0; col < 3; col++) {
     uint8_t columnByte = 0;
     int bitIndex = col; 
-    uint8_t b0 = (rows[0] >> bitIndex) & 1;
-    uint8_t b1 = (rows[1] >> bitIndex) & 1;
-    uint8_t b2 = (rows[2] >> bitIndex) & 1;
-    uint8_t b3 = (rows[3] >> bitIndex) & 1;
+    uint8_t b0 = (rows[3] >> bitIndex) & 1;
+    uint8_t b1 = (rows[4] >> bitIndex) & 1;
+    uint8_t b2 = (rows[5] >> bitIndex) & 1;
+    uint8_t b3 = (rows[6] >> bitIndex) & 1;
     
     columnByte |= (b0 << 3); 
     columnByte |= (b1 << 2); 
