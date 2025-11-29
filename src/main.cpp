@@ -30,7 +30,10 @@ const int   daylightOffset_sec = 0;
 #define MAX_DEVICES   5
 #define CS_PIN        5        
 
-// 2 ZONES defined in Parola logic
+// 3 ZONES:
+// ZONE 0: Clock (Modules 2-4)
+// ZONE 1: Weather Desc (Modules 1-3)
+// ZONE 2: Temp (Module 0)
 MD_Parola P(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 MD_MAX72XX* mx; 
 
@@ -130,9 +133,14 @@ void updateDisplay(unsigned long nowMs);
 void setup() {
   Serial.begin(115200);
   
-  // Initialize with 2 Zones (We will reuse them)
-  P.begin(2); 
+  // Initialize with 3 Zones
+  P.begin(3); 
   P.setIntensity(1);
+  
+  // DEFINE INITIAL ZONES (Page 1)
+  P.setZone(0, 2, 4); // Clock uses 2,3,4
+  P.setZone(1, 0, 0); // Dump Unused here (Manual HUD will overwrite)
+  P.setZone(2, 0, 0); // Dump Unused here (Manual HUD will overwrite)
   
   mx = P.getGraphicObject();
   
@@ -313,16 +321,17 @@ void updatePageLogic(unsigned long nowMs) {
   if (triggerZoneSetup) {
     mx->clear(); 
     
+    // RE-INIT TO CLEAR INTERNAL MAP
+    P.begin(3); 
+    
     if (currentPage == PAGE_CLOCK) {
       // PAGE 1 LAYOUT:
-      // Zone 0: CLOCK -> Modules 2, 3, 4 (Indices 16-39)
-      // Zone 1: DUMMY -> Module 0 (Index 0-7) 
-      // WHY MODULE 0? Because the manual HUD also writes to Module 0.
-      // If Parola tries to clear Zone 1, our manual HUD code 
-      // runs AFTER Parola and redraws the clouds/date immediately.
-      // This prevents Module 2 (part of the clock) from being erased.
+      // Active: Zone 0 (Clock) -> Modules 2-4
+      // Unused: Zones 1&2 -> Map to Module 0 (Rightmost).
+      // Since Manual HUD writes to Mod 0 at end of loop, it fixes any Parola clearing issues.
       P.setZone(0, 2, 4); 
       P.setZone(1, 0, 0); 
+      P.setZone(2, 0, 0); 
       
       P.setFont(0, BitPotion);
       P.setTextAlignment(0, PA_LEFT);
@@ -332,29 +341,29 @@ void updatePageLogic(unsigned long nowMs) {
       sprintf(clockStr, showColon ? "%02d:%02d" : "%02d %02d", getHour(), getMinute());
       P.displayZoneText(0, clockStr, PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
       P.displayZoneText(1, "", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT); 
+      P.displayZoneText(2, "", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT); 
     } 
     else if (currentPage == PAGE_WEATHER) {
       // PAGE 2 LAYOUT:
-      // Zone 0: DESC -> Modules 1, 2, 3 (Indices 8-31)
-      // Zone 1: TEMP -> Module 0 (Indices 0-7)
-      P.setZone(0, 1, 3); 
-      P.setZone(1, 0, 0); 
+      // Active: Zone 1 (Desc) -> Mods 1-3
+      // Active: Zone 2 (Temp) -> Mod 0
+      // Unused: Zone 0 (Clock) -> Map to Module 4 (Leftmost).
+      // Manual Sprite writes to Mod 4 at end of loop, fixing Parola clearing issues.
+      P.setZone(0, 4, 4); 
+      P.setZone(1, 1, 3); 
+      P.setZone(2, 0, 0); 
       
-      P.setFont(0, Milford); 
-      P.setFont(1, Milford);
-      P.setTextAlignment(0, PA_LEFT);
-      P.setTextAlignment(1, PA_CENTER);
+      P.setFont(1, Milford); 
+      P.setFont(2, Milford);
+      P.setTextAlignment(1, PA_LEFT);
+      P.setTextAlignment(2, PA_CENTER);
       
       strcpy(weatherTextBuffer, weatherDesc.c_str());
       sprintf(tempTextBuffer, "%d", feelsLikeTemp);
       
-      // Init Text
-      P.displayZoneText(0, weatherTextBuffer, PA_LEFT, 40, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-      P.displayZoneText(1, tempTextBuffer, PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
-      
-      // FORCE START SCROLL
-      // IMPORTANT: We must wait for one animate cycle before resetting? 
-      // No, calling it here flags it to start.
+      P.displayZoneText(0, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
+      P.displayZoneText(1, weatherTextBuffer, PA_LEFT, 40, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+      P.displayZoneText(2, tempTextBuffer, PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
     }
     
     mx->control(MD_MAX72XX::INTENSITY, 1);
@@ -373,16 +382,18 @@ void updateDisplay(unsigned long nowMs) {
   }
 
   // --- ANIMATE PAROLA ---
-  // If we are in Weather mode, ensure scroll loops
   if (P.displayAnimate()) {
     if (currentPage == PAGE_WEATHER) {
-      P.displayReset(0); // Reset Zone 0 (Description) to loop
+      // Only reset Zone 1 (Desc) if it finished scrolling
+      if (P.getZoneStatus(1)) {
+        P.displayReset(1);
+      }
     }
   }
 
   // --- PAGE 1: CLOCK LOGIC ---
   if (currentPage == PAGE_CLOCK) {
-    // Clock Tick
+    // 1. Clock Update
     if (nowMs - lastClockTick > 500) {
       lastClockTick = nowMs;
       updateLocalTime();
@@ -392,7 +403,7 @@ void updateDisplay(unsigned long nowMs) {
       P.setTextBuffer(0, clockStr);
     }
 
-    // Manual HUD (Modules 0,1) - THIS WILL OVERWRITE PAROLA ZONE 1 (Dummy)
+    // 2. Manual HUD (Writes over Zone 1 & 2 garbage on Mod 0/1)
     if (nowMs - lastCloudTick > CLOUD_DELAY) {
       lastCloudTick = nowMs;
       cloudPos += CLOUD_SPEED;
@@ -429,17 +440,17 @@ void updateDisplay(unsigned long nowMs) {
       drawToBuffer(cursor, img, 3, 0);
       cursor -= 4;
     }
-    // Push ONLY Modules 0 and 1 (This overwrites whatever P.displayAnimate did to Zone 1)
+    
+    // PUSH MANUAL DATA (Overwrites Modules 0 and 1)
     for(int i=0; i<16; i++) mx->setColumn(i, screenBuffer[i]);
   }
 
   // --- PAGE 2: WEATHER LOGIC ---
   else if (currentPage == PAGE_WEATHER) {
-    // Parola handles Zones 0 & 1 via displayAnimate()
-    // We only need to draw the Sprite manually on Module 4
-    
+    // Manual Sprite (Writes over Zone 0 garbage on Mod 4)
     drawSpriteToBuffer(39, weatherIconID);
-    // Push ONLY Module 4
+    
+    // PUSH MANUAL DATA (Overwrites Module 4)
     for(int i=32; i<40; i++) mx->setColumn(i, screenBuffer[i]);
   }
 }
