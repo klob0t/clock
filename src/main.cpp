@@ -64,16 +64,17 @@ enum PageState
 
 // 5-PIXEL TALL BITMAPS (Stored in Bytes 4,3,2,1,0)
 const uint64_t DIGITS[] = {
-    0x0000000305050506,
-    0x0000000702020302,
-    0x0000000702040507,
-    0x0000000704020407,
-    0x0000000404060505,
-    0x0000000205040307,
-    0x0000000205050306,
-    0x0000000202040407,
-    0x0000000705020507,
-    0x0000000306050502};
+  0x0000000305050506,
+  0x0000000702020302,
+  0x0000000702040507,
+  0x0000000704020407,
+  0x0000000404060505,
+  0x0000000205040307,
+  0x0000000205050306,
+  0x0000000202040407,
+  0x0000000705020507,
+  0x0000000306050502
+};
 const uint64_t LETTERS[] = {
     // 0x0000000505050707, // 1
     // 0x0000000305050506, // 2
@@ -110,27 +111,33 @@ const uint64_t LETTERS[] = {
 };
 const uint8_t DAY_MAP[8][3] = {
     {0, 0, 0}, {12, 5, 14}, {1, 2, 14}, {4, 5, 6}, {7, 6, 8}, {4, 9, 5}, {3, 10, 11}, {12, 13, 4}};
-const uint64_t CLOUDS[] = {
-    0x0000000000000f06, 0x0000000000000f0c, 0x0000000000000f00,
-    0x0000000000000f04, 0x0000000000000e07, 0x0000000000000f05, 0x0000000000000f03};
-const uint8_t WEATHER_ICONS[8][8] = {
-    {152, 100, 166, 109, 169, 98, 162, 92},
+constexpr int WEATHER_ICON_COUNT = 9;
+enum WeatherIcon : uint8_t
+{
+  ICON_HEAVY_RAIN = 0,
+  ICON_CLEAR = 1,
+  ICON_FEW_CLOUDS = 2,
+  ICON_BROKEN_CLOUDS = 3,
+  ICON_THUNDERSTORM = 4,
+  ICON_UNKNOWN = 5,
+  ICON_DRIZZLE = 6,
+  ICON_ATMOSPHERE = 7,
+  ICON_SNOW = 8
+};
+const uint8_t WEATHER_ICONS[WEATHER_ICON_COUNT][8] = {
+    {24, 36, 6, 175, 113, 42, 10, 28},
     {24, 102, 66, 129, 129, 66, 102, 24},
-    {24, 36, 36, 44, 40, 34, 34, 28},
-    {24, 36, 38, 45, 41, 34, 34, 28},
+    {48, 72, 72, 72, 80, 84, 68, 56},
+    {48, 72, 76, 82, 82, 68, 68, 56},
     {24, 36, 6, 165, 113, 42, 2, 28},
-    {16, 46, 42, 45, 37, 34, 38, 28},
+    {32, 92, 84, 90, 74, 68, 76, 56},
+    {144, 110, 42, 45, 165, 98, 38, 28},
     {80, 81, 85, 69, 17, 20, 84, 68},
     {66, 195, 60, 36, 36, 60, 195, 66}};
 
 // --- VARS ---
-const int NUM_CLOUDS = 7;
-const int CLOUD_WIDTH = 4;
-const int CLOUD_GAP = 6;
-const int TOTAL_CYCLE_LEN = NUM_CLOUDS * (CLOUD_WIDTH + CLOUD_GAP);
-
 bool showColon = true;
-unsigned long lastClockTick = 0;
+int lastSecond = -1;
 DateMode currentMode = MODE_DATE;
 DateMode nextMode = MODE_DAY;
 unsigned long modeTimer = 0;
@@ -140,11 +147,6 @@ int currentFrame = 0;
 
 int scrambleIndices[4];
 
-float cloudPos = 0.0;
-unsigned long lastCloudTick = 0;
-const int CLOUD_DELAY = 150;
-const float CLOUD_SPEED = 0.2;
-
 unsigned long lastScrambleTick = 0;
 const int SCRAMBLE_DELAY = 25;
 
@@ -152,8 +154,18 @@ PageState currentPage = PAGE_CLOCK;
 unsigned long pageTimer = 0;
 bool triggerZoneSetup = true;
 
+// Clock page bounce dot on module 1 (cols 8-15)
+const int BOUNCE_START_COL = 8;
+const int BOUNCE_END_COL = 15;
+float bouncePos = BOUNCE_START_COL;
+float bounceVel = 0.0f;
+const float BOUNCE_G_MAG = 56.0f;            // cols/s^2 toward the ground (left)
+const float BOUNCE_LAUNCH_V = 28.0f;         // initial rightward launch speed
+const unsigned long BOUNCE_MAX_DT = 40;      // clamp dt to avoid big jumps
+unsigned long lastBounceTick = 0;
+
 // Weather
-int weatherIconID = 1;
+uint8_t weatherIconID = ICON_CLEAR;
 String weatherDesc = "Init...";
 int feelsLikeTemp = 0;
 char weatherTextBuffer[60];
@@ -169,6 +181,7 @@ int getDay();
 int getMonth();
 int getWeekday();
 int getMinute();
+int getSecond();
 int getHour();
 void getWeatherData();
 void drawToBuffer(int startCol, uint64_t image, int width, int yOffset);
@@ -232,58 +245,71 @@ int getDay() { return timeinfo.tm_mday; }
 int getMonth() { return timeinfo.tm_mon + 1; }
 int getWeekday() { return timeinfo.tm_wday + 1; }
 int getHour() { return timeinfo.tm_hour; }
+int getSecond() { return timeinfo.tm_sec; }
 int getMinute() { return timeinfo.tm_min; }
 
 void getWeatherData()
 {
-  if (WiFi.status() == WL_CONNECTED)
+  if (WiFi.status() != WL_CONNECTED)
   {
-    HTTPClient http;
-    String url = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + countryCode + "&appid=" + apiKey + "&units=metric";
-    http.begin(url);
-    int httpCode = http.GET();
-
-    if (httpCode > 0)
-    {
-      String payload = http.getString();
-      JsonDocument doc;
-      deserializeJson(doc, payload);
-
-      int id = doc["weather"][0]["id"];
-      String rawDesc = doc["weather"][0]["description"];
-      float tempFloat = doc["main"]["feels_like"];
-      feelsLikeTemp = round(tempFloat);
-
-      if (rawDesc.length() > 0)
-        rawDesc.setCharAt(0, toupper(rawDesc.charAt(0)));
-      for (int i = 1; i < rawDesc.length(); i++)
-      {
-        if (rawDesc.charAt(i - 1) == ' ')
-          rawDesc.setCharAt(i, toupper(rawDesc.charAt(i)));
-      }
-      weatherDesc = rawDesc;
-
-      if (id == 800)
-        weatherIconID = 1;
-      else if (id >= 801 && id <= 802)
-        weatherIconID = 2;
-      else if (id >= 803 && id <= 804)
-        weatherIconID = 3;
-      else if (id >= 200 && id <= 232)
-        weatherIconID = 4;
-      else if (id >= 300 && id <= 321)
-        weatherIconID = 0;
-      else if (id >= 500 && id <= 531)
-        weatherIconID = 5;
-      else if (id >= 600 && id <= 622)
-        weatherIconID = 7;
-      else if (id >= 701 && id <= 781)
-        weatherIconID = 6;
-      else
-        weatherIconID = 3;
-    }
-    http.end();
+    weatherDesc = "No WiFi";
+    weatherIconID = ICON_UNKNOWN;
+    feelsLikeTemp = 0;
+    return;
   }
+
+  HTTPClient http;
+  String url = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + countryCode + "&appid=" + apiKey + "&units=metric";
+  http.begin(url);
+  int httpCode = http.GET();
+
+  if (httpCode > 0)
+  {
+    String payload = http.getString();
+    JsonDocument doc;
+    deserializeJson(doc, payload);
+
+    int id = doc["weather"][0]["id"];
+    String rawDesc = doc["weather"][0]["description"];
+    float tempFloat = doc["main"]["feels_like"];
+    feelsLikeTemp = round(tempFloat);
+
+    if (rawDesc.length() > 0)
+      rawDesc.setCharAt(0, toupper(rawDesc.charAt(0)));
+    for (int i = 1; i < rawDesc.length(); i++)
+    {
+      if (rawDesc.charAt(i - 1) == ' ')
+        rawDesc.setCharAt(i, toupper(rawDesc.charAt(i)));
+    }
+    weatherDesc = rawDesc;
+
+    if (id >= 200 && id <= 232)
+      weatherIconID = ICON_THUNDERSTORM;
+    else if (id >= 300 && id <= 321)
+      weatherIconID = ICON_DRIZZLE;
+    else if (id >= 500 && id <= 501)
+      weatherIconID = ICON_DRIZZLE;
+    else if (id >= 502 && id <= 531)
+      weatherIconID = ICON_HEAVY_RAIN;
+    else if (id >= 600 && id <= 622)
+      weatherIconID = ICON_SNOW;
+    else if (id >= 700 && id <= 781)
+      weatherIconID = ICON_ATMOSPHERE;
+    else if (id == 800)
+      weatherIconID = ICON_CLEAR;
+    else if (id == 801 || id == 802)
+      weatherIconID = ICON_FEW_CLOUDS;
+    else if (id == 803 || id == 804)
+      weatherIconID = ICON_BROKEN_CLOUDS;
+    else
+      weatherIconID = ICON_UNKNOWN;
+  }
+  else
+  {
+    weatherDesc = "No Data";
+    weatherIconID = ICON_UNKNOWN;
+  }
+  http.end();
 }
 
 // --- CORRECTED DRAW FUNCTION FOR 5-PIXEL FONTS ---
@@ -328,7 +354,7 @@ void drawToBuffer(int startCol, uint64_t image, int width, int yOffset)
 
 void drawSpriteToBuffer(int startCol, int iconID)
 {
-  if (iconID < 0 || iconID > 7)
+  if (iconID < 0 || iconID >= WEATHER_ICON_COUNT)
     return;
   for (int i = 0; i < 8; i++)
   {
@@ -460,6 +486,8 @@ void updatePageLogic(unsigned long nowMs)
       updateLocalTime();
       int h = getHour();
       int h12 = (h % 12 == 0) ? 12 : (h % 12);
+      lastSecond = getSecond();
+      showColon = (lastSecond % 2 == 0);
       char clockStr[6];
       sprintf(clockStr, showColon ? "%02d:%02d" : "%02d %02d", h12, getMinute());
       P.displayZoneText(0, clockStr, PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
@@ -511,40 +539,17 @@ void updateDisplay(unsigned long nowMs)
 
   if (currentPage == PAGE_CLOCK)
   {
-    if (nowMs - lastClockTick > 500)
+    updateLocalTime();
+    if (getSecond() != lastSecond)
     {
-      lastClockTick = nowMs;
-      updateLocalTime();
+      lastSecond = getSecond();
       int h = getHour();
       int h12 = (h % 12 == 0) ? 12 : (h % 12);
-      showColon = !showColon;
+      showColon = (lastSecond % 2 == 0);
       static char clockStr[10];
       sprintf(clockStr, showColon ? "%02d:%02d" : "%02d %02d", h12, getMinute());
       P.setTextBuffer(0, clockStr);
       P.displayReset(0);
-    }
-
-    if (nowMs - lastCloudTick > CLOUD_DELAY)
-    {
-      lastCloudTick = nowMs;
-      cloudPos += CLOUD_SPEED;
-      if (cloudPos > TOTAL_CYCLE_LEN)
-        cloudPos -= TOTAL_CYCLE_LEN;
-    }
-    if (getHour() < 12)
-    {
-      for (int i = 0; i < NUM_CLOUDS; i++)
-      {
-        int offset = i * (CLOUD_WIDTH + CLOUD_GAP);
-        float absolutePos = cloudPos + offset;
-        float modPos = fmod(absolutePos, TOTAL_CYCLE_LEN);
-        if (modPos < 0)
-          modPos += TOTAL_CYCLE_LEN;
-        if (modPos < HUD_WIDTH)
-          drawToBuffer((int)modPos, CLOUDS[i], CLOUD_WIDTH, 5);
-        if (modPos - TOTAL_CYCLE_LEN > -10)
-          drawToBuffer((int)modPos - TOTAL_CYCLE_LEN, CLOUDS[i], CLOUD_WIDTH, 5);
-      }
     }
     updateModeSwitcher(nowMs);
     // if (currentMode == MODE_SCRAMBLE)
@@ -624,6 +629,44 @@ void updateDisplay(unsigned long nowMs)
       cursor -= charWidth;
       cursor -= 1;
     }
+
+    // Animate a bouncing dot along columns 8-15 (module 1) with gravity-like motion
+    if (lastBounceTick == 0)
+    if (lastBounceTick == 0)
+    {
+      lastBounceTick = nowMs;
+      bounceVel = BOUNCE_LAUNCH_V;
+    }
+
+    unsigned long dtMs = nowMs - lastBounceTick;
+    if (dtMs > BOUNCE_MAX_DT)
+      dtMs = BOUNCE_MAX_DT;
+    lastBounceTick = nowMs;
+
+    float dt = dtMs / 1000.0f; // convert to seconds
+
+    bounceVel += -BOUNCE_G_MAG * dt; // constant pull toward left
+    bouncePos += bounceVel * dt;
+
+    // Bounce off the ground (left wall)
+    if (bouncePos < BOUNCE_START_COL)
+    {
+      bouncePos = BOUNCE_START_COL;
+      bounceVel = BOUNCE_LAUNCH_V;
+    }
+
+    // Clamp at right wall just in case
+    if (bouncePos > BOUNCE_END_COL)
+      bouncePos = BOUNCE_END_COL;
+
+    int col = int(lround(bouncePos));
+    if (col < BOUNCE_START_COL)
+      col = BOUNCE_START_COL;
+    else if (col > BOUNCE_END_COL)
+      col = BOUNCE_END_COL;
+
+    screenBuffer[col] |= 0x40; // second row from bottom on rotated matrix
+
     for (int i = 0; i < 16; i++)
       mx->setColumn(i, screenBuffer[i]);
   }
@@ -646,9 +689,8 @@ void updateDisplay(unsigned long nowMs)
     // Draw Units at Col 3 (Width 3) (1px gap from tens)
     drawToBuffer(3, DIGITS[units], 3, 2);
     // Draw Degree at Col 0 (Top dot)
-    // 0x10 is Bit 4. If yOffset is 0, it's top.
-    // Let's manually set bit 4 at column 0.
-    screenBuffer[0] |= 0x10;
+    // Use bit 3 (row 2 from top) for degree dot on rotated matrix.
+    screenBuffer[0] |= 0x08;
 
     // Push Module 4 and Module 0
     for (int i = 32; i < 40; i++)
