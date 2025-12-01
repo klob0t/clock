@@ -13,11 +13,11 @@
 // 1. CONFIGURATION
 // =============================================================================
 
-const char *ssid = "12";
-const char *password = "p00chiz!";
+const char *ssid = "HALUU, how are you?";
+const char *password = "haluubanget!";
 String apiKey = "dd0bd7ff5c526a7abeb18234d403f935";
-String city = "Jakarta";
-String countryCode = "ID";
+String latitude = "-6.1488";
+String longitude = "106.8468";
 
 unsigned long lastWeatherCheck = 0;
 unsigned long weatherCheckInterval = 600000;
@@ -64,17 +64,16 @@ enum PageState
 
 // 5-PIXEL TALL BITMAPS (Stored in Bytes 4,3,2,1,0)
 const uint64_t DIGITS[] = {
-  0x0000000305050506,
-  0x0000000702020302,
-  0x0000000702040507,
-  0x0000000704020407,
-  0x0000000404060505,
-  0x0000000205040307,
-  0x0000000205050306,
-  0x0000000202040407,
-  0x0000000705020507,
-  0x0000000306050502
-};
+    0x0000000305050506,
+    0x0000000702020302,
+    0x0000000702040507,
+    0x0000000704020407,
+    0x0000000404060505,
+    0x0000000205040307,
+    0x0000000205050306,
+    0x0000000202040407,
+    0x0000000705020507,
+    0x0000000306050502};
 const uint64_t LETTERS[] = {
     // 0x0000000505050707, // 1
     // 0x0000000305050506, // 2
@@ -159,9 +158,9 @@ const int BOUNCE_START_COL = 0;
 const int BOUNCE_END_COL = 15;
 float bouncePos = BOUNCE_START_COL;
 float bounceVel = 0.0f;
-const float BOUNCE_G_MAG = 56.0f;            // cols/s^2 toward the ground (left)
-const float BOUNCE_LAUNCH_V = 28.0f;         // initial rightward launch speed
-const unsigned long BOUNCE_MAX_DT = 40;      // clamp dt to avoid big jumps
+const float BOUNCE_G_MAG = 58.0f;       // cols/s^2 toward the ground (left)
+const float BOUNCE_LAUNCH_V = 40.0f;    // initial rightward launch speed
+const unsigned long BOUNCE_MAX_DT = 40; // clamp dt to avoid big jumps
 unsigned long lastBounceTick = 0;
 
 // Weather
@@ -259,7 +258,7 @@ void getWeatherData()
   }
 
   HTTPClient http;
-  String url = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + countryCode + "&appid=" + apiKey + "&units=metric";
+  String url = "http://api.openweathermap.org/data/2.5/weather?lat=" + latitude + "&lon=" + longitude + "&appid=" + apiKey + "&units=metric";
   http.begin(url);
   int httpCode = http.GET();
 
@@ -544,6 +543,7 @@ void updateDisplay(unsigned long nowMs)
     {
       lastSecond = getSecond();
       int h = getHour();
+      bool isPM = (h >= 12);
       int h12 = (h % 12 == 0) ? 12 : (h % 12);
       showColon = (lastSecond % 2 == 0);
       static char clockStr[10];
@@ -632,11 +632,11 @@ void updateDisplay(unsigned long nowMs)
 
     // Animate a bouncing dot along columns 8-15 (module 1) with gravity-like motion
     if (lastBounceTick == 0)
-    if (lastBounceTick == 0)
-    {
-      lastBounceTick = nowMs;
-      bounceVel = BOUNCE_LAUNCH_V;
-    }
+      if (lastBounceTick == 0)
+      {
+        lastBounceTick = nowMs;
+        bounceVel = BOUNCE_LAUNCH_V;
+      }
 
     unsigned long dtMs = nowMs - lastBounceTick;
     if (dtMs > BOUNCE_MAX_DT)
@@ -666,6 +666,15 @@ void updateDisplay(unsigned long nowMs)
       col = BOUNCE_END_COL;
 
     screenBuffer[col] |= 0x40; // second row from bottom on rotated matrix
+
+    int hourNow = getHour();
+    bool isPM = (hourNow >= 12);
+
+    screenBuffer[17] |= isPM ? 0x51 : 0x55;
+    screenBuffer[16] |= isPM ? 0x77 : 0x72;
+
+    mx->setColumn(17, screenBuffer[17]);
+    mx->setColumn(16, screenBuffer[16]);
 
     for (int i = 0; i < 16; i++)
       mx->setColumn(i, screenBuffer[i]);
