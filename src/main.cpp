@@ -155,7 +155,7 @@ unsigned long pageTimer = 0;
 bool triggerZoneSetup = true;
 
 // Clock page bounce dot on module 1 (cols 8-15)
-const int BOUNCE_START_COL = 8;
+const int BOUNCE_START_COL = 0;
 const int BOUNCE_END_COL = 15;
 float bouncePos = BOUNCE_START_COL;
 float bounceVel = 0.0f;
@@ -593,7 +593,7 @@ void updateDisplay(unsigned long nowMs)
     int d = getDay();
     int m = getMonth();
     int wd = getWeekday();
-    int cursor = 15;
+    int cursor = 14;
     for (int i = 0; i < 4; i++)
     {
       uint64_t img = 0;
