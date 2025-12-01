@@ -3,28 +3,22 @@
 #include <MD_MAX72xx.h>
 #include <SPI.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
 #include "time.h"
 #include "BitPotionFont.h"
 #include "MilfordFont.h"
+#include "config.h"
+#include "time_service.h"
+#include "weather_service.h"
+#include "display_clock.h"
+#include "display_weather.h"
+#include "animations.h"
 
 // =============================================================================
-// 1. CONFIGURATION
+// 1. STATE
 // =============================================================================
-
-const char *ssid = "HALUU, how are you?";
-const char *password = "haluubanget!";
-String apiKey = "dd0bd7ff5c526a7abeb18234d403f935";
-String latitude = "-6.1488";
-String longitude = "106.8468";
 
 unsigned long lastWeatherCheck = 0;
-unsigned long weatherCheckInterval = 600000;
-
-const char *ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 25200;
-const int daylightOffset_sec = 0;
+unsigned long weatherCheckInterval = WEATHER_CHECK_INTERVAL;
 
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES 5
@@ -44,12 +38,6 @@ uint8_t screenBuffer[TOTAL_WIDTH];
 // =============================================================================
 // 2. ENUMS & STATES
 // =============================================================================
-enum DateMode : uint8_t
-{
-  MODE_DATE,
-  MODE_SCRAMBLE,
-  MODE_DAY
-};
 enum PageState
 {
   PAGE_CLOCK,
@@ -183,8 +171,6 @@ int getMinute();
 int getSecond();
 int getHour();
 void getWeatherData();
-void drawToBuffer(int startCol, uint64_t image, int width, int yOffset);
-void drawSpriteToBuffer(int startCol, int iconID);
 void drawGlitch();
 void startScrambleTransition(DateMode destination);
 void updateModeSwitcher(unsigned long nowMs);
@@ -208,13 +194,12 @@ void setup()
 
   mx = P.getGraphicObject();
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED)
     delay(100);
 
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  struct tm t;
-  while (!getLocalTime(&t))
+  initTime(NTP_SERVER, GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC);
+  while (!getTimeState(500).valid)
     delay(100);
 
   getWeatherData();
@@ -239,7 +224,12 @@ void loop()
 // 6. FUNCTIONS
 // =============================================================================
 
-void updateLocalTime() { getLocalTime(&timeinfo); }
+void updateLocalTime()
+{
+  TimeState ts = getTimeState();
+  if (ts.valid)
+    timeinfo = ts.now;
+}
 int getDay() { return timeinfo.tm_mday; }
 int getMonth() { return timeinfo.tm_mon + 1; }
 int getWeekday() { return timeinfo.tm_wday + 1; }
@@ -257,30 +247,12 @@ void getWeatherData()
     return;
   }
 
-  HTTPClient http;
-  String url = "http://api.openweathermap.org/data/2.5/weather?lat=" + latitude + "&lon=" + longitude + "&appid=" + apiKey + "&units=metric";
-  http.begin(url);
-  int httpCode = http.GET();
-
-  if (httpCode > 0)
+  WeatherData data = fetchWeather(OWM_API_KEY, LATITUDE, LONGITUDE);
+  if (data.valid)
   {
-    String payload = http.getString();
-    JsonDocument doc;
-    deserializeJson(doc, payload);
-
-    int id = doc["weather"][0]["id"];
-    String rawDesc = doc["weather"][0]["description"];
-    float tempFloat = doc["main"]["feels_like"];
-    feelsLikeTemp = round(tempFloat);
-
-    if (rawDesc.length() > 0)
-      rawDesc.setCharAt(0, toupper(rawDesc.charAt(0)));
-    for (int i = 1; i < rawDesc.length(); i++)
-    {
-      if (rawDesc.charAt(i - 1) == ' ')
-        rawDesc.setCharAt(i, toupper(rawDesc.charAt(i)));
-    }
-    weatherDesc = rawDesc;
+    int id = data.id;
+    weatherDesc = data.desc;
+    feelsLikeTemp = data.feelsLike;
 
     if (id >= 200 && id <= 232)
       weatherIconID = ICON_THUNDERSTORM;
@@ -307,62 +279,6 @@ void getWeatherData()
   {
     weatherDesc = "No Data";
     weatherIconID = ICON_UNKNOWN;
-  }
-  http.end();
-}
-
-// --- CORRECTED DRAW FUNCTION FOR 5-PIXEL FONTS ---
-void drawToBuffer(int startCol, uint64_t image, int width, int yOffset)
-{
-  if (image == 0)
-    return;
-
-  uint8_t rows[5];
-
-  // Extract 5 rows: Byte 4 (Top) to Byte 0 (Bottom)
-  rows[0] = (image >> 32) & 0xFF; // Top Row
-  rows[1] = (image >> 24) & 0xFF;
-  rows[2] = (image >> 16) & 0xFF;
-  rows[3] = (image >> 8) & 0xFF;
-  rows[4] = (image >> 0) & 0xFF; // Bottom Row
-
-  for (int col = 0; col < width; col++)
-  {
-    uint8_t columnByte = 0;
-
-    // Explicitly map Row Index to Bit Position (Higher row = Higher Bit)
-    uint8_t b0 = (rows[0] >> col) & 0x01; // Top Row
-    uint8_t b1 = (rows[1] >> col) & 0x01;
-    uint8_t b2 = (rows[2] >> col) & 0x01;
-    uint8_t b3 = (rows[3] >> col) & 0x01;
-    uint8_t b4 = (rows[4] >> col) & 0x01; // Bottom Row
-
-    columnByte |= (b0 << 4); // Bit 4 = Top
-    columnByte |= (b1 << 3);
-    columnByte |= (b2 << 2);
-    columnByte |= (b3 << 1);
-    columnByte |= (b4 << 0); // Bit 0 = Bottom
-
-    int targetCol = startCol - col;
-    if (targetCol >= 0 && targetCol < TOTAL_WIDTH)
-    {
-      screenBuffer[targetCol] |= (columnByte << yOffset);
-    }
-  }
-}
-
-void drawSpriteToBuffer(int startCol, int iconID)
-{
-  if (iconID < 0 || iconID >= WEATHER_ICON_COUNT)
-    return;
-  for (int i = 0; i < 8; i++)
-  {
-    uint8_t byte = WEATHER_ICONS[iconID][i];
-    int targetCol = startCol - i;
-    if (targetCol >= 0 && targetCol < TOTAL_WIDTH)
-    {
-      screenBuffer[targetCol] = byte;
-    }
   }
 }
 
@@ -590,45 +506,23 @@ void updateDisplay(unsigned long nowMs)
       }
     }
 
-    int d = getDay();
-    int m = getMonth();
-    int wd = getWeekday();
-    int cursor = 14;
+    ClockRenderState clockState{};
+    clockState.hour = getHour();
+    clockState.minute = getMinute();
+    clockState.second = getSecond();
+    clockState.day = getDay();
+    clockState.month = getMonth();
+    clockState.weekday = getWeekday();
+    clockState.showColon = showColon;
+    clockState.mode = currentMode;
+    clockState.currentFrame = currentFrame;
     for (int i = 0; i < 4; i++)
     {
-      uint64_t img = 0;
-      int charWidth = 3;
-      if (currentMode == MODE_SCRAMBLE)
-      {
-        if (currentFrame < resolveFrame[i])
-        {
-          img = LETTERS[scrambleIndices[i]];
-          charWidth = 3;
-        }
-        else
-        {
-          img = targetBitmaps[i];
-          charWidth = 3;
-        }
-      }
-      else if (currentMode == MODE_DATE)
-      {
-        int val = (i == 0) ? d / 10 : (i == 1) ? d % 10
-                                  : (i == 2)   ? m / 10
-                                               : m % 10;
-        img = DIGITS[val];
-        charWidth = 3;
-      }
-      else
-      {
-        int idx = (i < 3) ? DAY_MAP[wd][i] : -1;
-        img = (idx >= 0) ? LETTERS[idx] : 0;
-        charWidth = 3;
-      }
-      drawToBuffer(cursor, img, charWidth, 0);
-      cursor -= charWidth;
-      cursor -= 1;
+      clockState.resolveFrame[i] = resolveFrame[i];
+      clockState.scrambleIndices[i] = scrambleIndices[i];
+      clockState.targetBitmaps[i] = targetBitmaps[i];
     }
+    drawClock(clockState, DIGITS, LETTERS, DAY_MAP, screenBuffer, TOTAL_WIDTH);
 
     // Animate a bouncing dot along columns 8-15 (module 1) with gravity-like motion
     if (lastBounceTick == 0)
@@ -682,24 +576,14 @@ void updateDisplay(unsigned long nowMs)
 
   else if (currentPage == PAGE_WEATHER)
   {
-    // Draw Sprite (Module 4)
-    drawSpriteToBuffer(39, weatherIconID);
+    WeatherRenderState weatherState{};
+    weatherState.data.valid = true;
+    weatherState.data.id = weatherIconID;
+    weatherState.data.desc = weatherDesc;
+    weatherState.data.feelsLike = feelsLikeTemp;
+    weatherState.iconId = weatherIconID;
 
-    // Draw Temp Manually (Module 0)
-    // Layout: [Tens][Units][Degree]
-    // 3px + 3px + 1px = 7px width. Fits in 8px.
-    int t = feelsLikeTemp;
-    int tens = t / 10;
-    int units = t % 10;
-
-    // Draw Tens at Col 7 (Width 3)
-    if (t >= 10)
-      drawToBuffer(7, DIGITS[tens], 3, 2); // yOffset 2 to center
-    // Draw Units at Col 3 (Width 3) (1px gap from tens)
-    drawToBuffer(3, DIGITS[units], 3, 2);
-    // Draw Degree at Col 0 (Top dot)
-    // Use bit 3 (row 2 from top) for degree dot on rotated matrix.
-    screenBuffer[0] |= 0x08;
+    drawWeather(weatherState, WEATHER_ICONS, DIGITS, screenBuffer, TOTAL_WIDTH);
 
     // Push Module 4 and Module 0
     for (int i = 32; i < 40; i++)

@@ -1,10 +1,10 @@
 # ESP32 LED Matrix Clock + Weather
 
-A 5-module MAX7219/FC16 (8×40) LED matrix clock for ESP32 with a bouncing dot, date/day shuffle, and weather from OpenWeatherMap.
+A 5-module MAX7219/FC16 (8ï¿½40) LED matrix clock for ESP32 with a bouncing dot, date/day shuffle, and weather from OpenWeatherMap.
 
 ## Hardware
 - ESP32 dev board (Arduino framework)
-- 5 × FC16 MAX7219 8×8 modules, daisy-chained
+- 5 ï¿½ FC16 MAX7219 8ï¿½8 modules, daisy-chained
 - Wiring (VSPI):
   - MOSI (GPIO23) -> DIN
   - SCK  (GPIO18) -> CLK
@@ -14,16 +14,16 @@ A 5-module MAX7219/FC16 (8×40) LED matrix clock for ESP32 with a bouncing dot, d
 ## Build & Flash
 - PlatformIO environment: env:esp32 (see platformio.ini)
 - Dependencies handled by PlatformIO:
-  - MD_Parola, MD_MAX72XX, DS3232RTC, Time, ArduinoJson
+  - MD_Parola, MD_MAX72XX, Time, ArduinoJson
 - Build/flash: `pio run -e esp32 -t upload`
 - Serial monitor: 115200 baud
 
 ## Configuration
 Set these near the top of src/main.cpp:
-- ssid / password – your Wi-Fi
-- apiKey – OpenWeatherMap API key
-- city, countryCode – location for weather
-- gmtOffset_sec, daylightOffset_sec – timezone
+- ssid / password ï¿½ your Wi-Fi
+- apiKey ï¿½ OpenWeatherMap API key
+- city, countryCode ï¿½ location for weather
+- gmtOffset_sec, daylightOffset_sec ï¿½ timezone
 
 ## Display Behavior
 - Clock page: 12h format with blinking colon, bouncing dot across module 1.
@@ -32,11 +32,11 @@ Set these near the top of src/main.cpp:
 - Intensity is fixed low (MD_MAX72XX::INTENSITY = 1); adjust as needed.
 
 ## AM/PM Indicator (manual draw)
-If you want the tiny 2×2 AM/PM glyph at columns 23/24 (1-based):
+If you want the tiny 2ï¿½2 AM/PM glyph at columns 23/24 (1-based):
 - Use bytes:
   - PM: left 0x51, right 0x77
   - AM: left 0x55, right 0x72
-- In updateDisplay, inside PAGE_CLOCK after writing the bounce pixel and before pushing columns, OR them into screenBuffer[22] and screenBuffer[23] (0-based).
+- In updateDisplay, inside PAGE_CLOCK after writing the bounce pixel and before pushing columns, OR them into screenBuffer[18] and screenBuffer[17] (0-based).
 
 ## Notes
 - Current startup waits for Wi-Fi and NTP before drawing; consider adding a timeout/offline message if you want immediate display.
