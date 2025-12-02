@@ -1,10 +1,10 @@
-# ESP32 LED Matrix Clock + Weather
+# ESP32 LED Matrix Clock + Weather + Sun + Scope
 
-A 5-module MAX7219/FC16 (8�40) LED matrix clock for ESP32 with a bouncing dot, date/day shuffle, and weather from OpenWeatherMap.
+A 5-module MAX7219/FC16 (8×40) LED matrix clock for ESP32 with a bouncing dot, date/day shuffle, weather from OpenWeatherMap, a sunrise/sunset countdown, and an oscilloscope page fed over UDP.
 
 ## Hardware
 - ESP32 dev board (Arduino framework)
-- 5 � FC16 MAX7219 8�8 modules, daisy-chained
+- 5 FC16 MAX7219 8×8 modules, daisy-chained
 - Wiring (VSPI):
   - MOSI (GPIO23) -> DIN
   - SCK  (GPIO18) -> CLK
@@ -12,32 +12,33 @@ A 5-module MAX7219/FC16 (8�40) LED matrix clock for ESP32 with a bouncing dot,
   - 5V (or 3.3V if your modules support it) and GND shared
 
 ## Build & Flash
-- PlatformIO environment: env:esp32 (see platformio.ini)
-- Dependencies handled by PlatformIO:
-  - MD_Parola, MD_MAX72XX, Time, ArduinoJson
-- Build/flash: `pio run -e esp32 -t upload`
-- Serial monitor: 115200 baud
+- PlatformIO env: `env:esp32` (see platformio.ini)
+- Dependencies via PlatformIO: MD_Parola, MD_MAX72XX, Time, ArduinoJson
+- Build: `pio run -e esp32`
+- Flash: `pio run -e esp32 -t upload` (set `--upload-port COMx` if needed)
+- Monitor: `pio device monitor -b 115200`
 
 ## Configuration
-Set these near the top of src/main.cpp:
-- ssid / password � your Wi-Fi
-- apiKey � OpenWeatherMap API key
-- city, countryCode � location for weather
-- gmtOffset_sec, daylightOffset_sec � timezone
+Edit `include/config.h`:
+- `WIFI_SSID` / `WIFI_PASSWORD`
+- `OWM_API_KEY`, `LATITUDE`, `LONGITUDE`
+- `NTP_SERVER`, `GMT_OFFSET_SEC`, `DAYLIGHT_OFFSET_SEC`
+- Page timings, control port/codes, mDNS hostname (`myclock` by default), display intensity
 
 ## Display Behavior
-- Clock page: 12h format with blinking colon, bouncing dot across module 1.
-- Date/Day: cycles via scramble transition.
-- Weather page: icon on module 5, scrolling description, temperature on module 1.
-- Intensity is fixed low (MD_MAX72XX::INTENSITY = 1); adjust as needed.
+- Page cycle: Clock → Weather → Sun → Scope → Clock (glitch transitions).
+- Clock: 12h with blinking colon; bouncing dot on module 1; AM/PM glyph on module 2.
+- Weather: icon on module 5; scrolling description on modules 1–3; temperature on module 1.
+- Sun: sun/moon sprite on module 5; scrolling Milford text “Sunrise/Sunset in X hours/minutes” on modules 1–4.
+- Scope: oscilloscope plot across all columns; feed raw samples over UDP (see below).
 
-## AM/PM Indicator (manual draw)
-If you want the tiny 2�2 AM/PM glyph at columns 23/24 (1-based):
-- Use bytes:
-  - PM: left 0x51, right 0x77
-  - AM: left 0x55, right 0x72
-- In updateDisplay, inside PAGE_CLOCK after writing the bounce pixel and before pushing columns, OR them into screenBuffer[18] and screenBuffer[17] (0-based).
+## Controls (UDP + mDNS)
+- mDNS hostname: `myclock.local` (IP prints on boot).
+- Control UDP port: `CONTROL_UDP_PORT` (default 4210).
+- Control codes: `0x01` clock, `0x02` weather, `0x03` sun, `0x04` scope, `0x20` next page (cycles all pages).
+- Example Python sender with hotkey in `send_keys_udp.py` (Ctrl+Alt+F10 sends `0x20`).
+- Audio UDP port: `AUDIO_UDP_PORT` (default 4211). Send a packet of raw bytes (0–255 amplitude) mapped across the 40 columns; extra bytes are ignored.
 
 ## Notes
-- Current startup waits for Wi-Fi and NTP before drawing; consider adding a timeout/offline message if you want immediate display.
-- Weather refresh interval: 10 minutes by default.
+- Weather refresh interval: 10 minutes by default (`WEATHER_CHECK_INTERVAL`).
+- Startup waits for Wi-Fi + NTP before drawing; logs IP and control packets to serial.

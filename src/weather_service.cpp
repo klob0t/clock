@@ -30,6 +30,8 @@ WeatherData fetchWeather(const String &apiKey, const String &lat, const String &
             data.desc = doc["weather"][0]["description"] | "";
             float tempFloat = doc["main"]["feels_like"] | 0.0;
             data.feelsLike = round(tempFloat);
+            data.sunrise = doc["sys"]["sunrise"] | 0UL;
+            data.sunset = doc["sys"]["sunset"] | 0UL;
 
             if (data.desc.length() > 0)
                 data.desc.setCharAt(0, toupper(data.desc.charAt(0)));

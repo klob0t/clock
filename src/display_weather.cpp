@@ -69,5 +69,5 @@ void drawWeather(const WeatherRenderState &state,
   // Units at col 3
   drawToBuffer(3, digits[units], 3, 2, screenBuffer, totalWidth);
   // Degree dot at top-left of module: bit 3 (row 2 from top)
-  screenBuffer[0] |= 0x08;
+  screenBuffer[0] |= 0x02;
 }

@@ -1,0 +1,57 @@
+could we refactor further? im planning to add a page and make it be able to control via web which
+  page are showing
+
+
+• Yes. For adding pages and web-controlled page selection, refactor toward a clearer UI state machine
+  and decoupled rendering. Suggested steps:
+
+  1. UI state struct + registration
+
+  - Define a Page concept: { PageState id; unsigned long durationMs; std::function<void()> onEnter;
+    std::function<void(unsigned long now, uint8_t* buffer)> render; }
+  - Keep a vector/array of pages in main.cpp (or ui_pages.cpp). Add new pages by registering new
+    entries.
+  - UI controller holds: currentPageIdx, pageTimer, triggerZoneSetup, nextPageIdx override (set via
+    web).
+
+  2. Decouple renderers
+
+  - Keep drawClock/drawWeather as pure buffer writers. Add new page draw functions similarly (e.g.,
+    drawCustomPage(...)).
+  - Main loop clears screenBuffer, calls the current page’s render, then pushes columns.
+
+  3. Web control hook
+
+  - Add a lightweight HTTP server (ESP32 WebServer or AsyncWebServer if you prefer) with endpoints:
+      - GET /page → returns current page id/name.
+      - POST /page?id=<id> → set nextPageIdx and optionally reset pageTimer.
+      - Optional: GET /pages to list available pages.
+  - In the main loop, if nextPageIdx is set by web, override the scheduled transition.
+
+  4. Config-driven pages
+
+  - Keep durations and ordering in a small array or config section, e.g.:
+
+    struct PageDef { PageState id; unsigned long duration; };
+    const PageDef PAGE_SEQUENCE[] = {
+      {PAGE_CLOCK, 50000},
+      {PAGE_WEATHER, 10000},
+      // add more here
+    };
+    Use PAGE_SEQUENCE for auto-advance, but allow web to jump.
+
+  5. Threading/timing
+
+  - Use non-blocking server handlers (no long delays).
+  - Keep render timing unchanged; just insert a check for web override before auto-advance.
+
+  6. Minimal code moves
+
+  - Add ui_state.h/.cpp with PageState, UiState { size_t currentIdx; unsigned long pageTimer;
+    bool triggerZoneSetup; int overrideIdx; } and helpers: initUi, tickUi(now, ui, sequenceLen,
+    overrideIdx).
+  - main.cpp remains orchestrator: update time/weather, tick UI, call render for the active page,
+    push columns.
+
+  If you want, I can draft the ui_state helper and a small web server stub (WebServer with /page GET/
+  POST) that toggles the current page id without touching the rendering logic.

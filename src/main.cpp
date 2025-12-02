@@ -3,6 +3,8 @@
 #include <MD_MAX72xx.h>
 #include <SPI.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
 #include "time.h"
 #include "BitPotionFont.h"
 #include "MilfordFont.h"
@@ -11,6 +13,8 @@
 #include "weather_service.h"
 #include "display_clock.h"
 #include "display_weather.h"
+#include "display_sun.h"
+#include "display_scope.h"
 #include "animations.h"
 
 // =============================================================================
@@ -30,6 +34,8 @@ unsigned long weatherCheckInterval = WEATHER_CHECK_INTERVAL;
 // ZONE 2: Temp (Module 0)
 MD_Parola P(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
 MD_MAX72XX *mx;
+WiFiUDP controlUdp;
+WiFiUDP audioUdp;
 
 static const int TOTAL_WIDTH = 40;
 static const int HUD_WIDTH = 16;
@@ -43,6 +49,10 @@ enum PageState
   PAGE_CLOCK,
   TRANS_TO_WEATHER,
   PAGE_WEATHER,
+  TRANS_TO_SUN,
+  PAGE_SUN,
+  TRANS_TO_SCOPE,
+  PAGE_SCOPE,
   TRANS_TO_CLOCK
 };
 
@@ -63,22 +73,6 @@ const uint64_t DIGITS[] = {
     0x0000000705020507,
     0x0000000306050502};
 const uint64_t LETTERS[] = {
-    // 0x0000000505050707, // 1
-    // 0x0000000305050506, // 2
-    // 0x0000000101030107, // 3
-    // 0x0000000202020207, // 4
-    // 0x0000000305050505, // 5
-    // 0x0000000701030107, // 6
-    // 0x0000000707050505, // 7
-    // 0x0000000705050503, //
-    // 0x0000000505070505,
-    // 0x0000000505030503,
-    // 0x0000000702020207,
-    // 0x0000000704060107,
-    // 0x0000000505070503,
-    // 0x0000000505050503,
-    // 0x0000000505020505
-
     0x0000000505020505,
     0x0000000505050707,
     0x0000000305050506,
@@ -93,9 +87,7 @@ const uint64_t LETTERS[] = {
     0x0000000702020207,
     0x0000000704060107,
     0x0000000505070503,
-    0x0000000505050503
-
-};
+    0x0000000505050503};
 const uint8_t DAY_MAP[8][3] = {
     {0, 0, 0}, {12, 5, 14}, {1, 2, 14}, {4, 5, 6}, {7, 6, 8}, {4, 9, 5}, {3, 10, 11}, {12, 13, 4}};
 constexpr int WEATHER_ICON_COUNT = 9;
@@ -121,6 +113,24 @@ const uint8_t WEATHER_ICONS[WEATHER_ICON_COUNT][8] = {
     {144, 110, 42, 45, 165, 98, 38, 28},
     {80, 81, 85, 69, 17, 20, 84, 68},
     {66, 195, 60, 36, 36, 60, 195, 66}};
+
+const uint64_t MOON_SUN[] = {
+    0x1866428181426618, // sun fully in the sky (mid-day)
+    0xff42818142661800, // sun 1 row lower
+    0xff81814266180000, // sun 2 rows lower
+    0xff81426618000000, // sun 3 rows lower
+    0xff42661800000000, // sun 4 rows lower
+    0xff66180000000000, // sun 5 rows lower
+    0xff18000000000000, // sun 6 rows lower
+    0xff00000000000000, // horizon only (________) (exactly at sunset/sunrise)
+    0x3c4688909088463c, // moon fully in  the sky (mid-night)
+    0xff48909088463c00, // moon 1 row lower
+    0xff909088463c0000, // moon 2 rows lower
+    0xff9088463c000000, // moon 3 rows lower
+    0xff88463c00000000, // moon 4 rows lower
+    0xff463c0000000000, // moon 5 rows lower
+    0xff3c000000000000  // moon 6 rows lower
+  };
 
 // --- VARS ---
 bool showColon = true;
@@ -157,6 +167,12 @@ String weatherDesc = "Init...";
 int feelsLikeTemp = 0;
 char weatherTextBuffer[60];
 char tempTextBuffer[10];
+unsigned long sunriseEpoch = 0;
+unsigned long sunsetEpoch = 0;
+char sunTextBuffer[60];
+uint8_t scopeSamples[TOTAL_WIDTH];
+bool scopeHasData = false;
+unsigned long lastScopePacketMs = 0;
 
 struct tm timeinfo;
 
@@ -176,6 +192,9 @@ void startScrambleTransition(DateMode destination);
 void updateModeSwitcher(unsigned long nowMs);
 void updatePageLogic(unsigned long nowMs);
 void updateDisplay(unsigned long nowMs);
+void forcePage(PageState target, unsigned long nowMs, bool withTransition = true);
+void handleControlPackets(unsigned long nowMs);
+void handleAudioPackets(unsigned long nowMs);
 
 // =============================================================================
 // 5. SETUP
@@ -185,7 +204,7 @@ void setup()
   Serial.begin(115200);
 
   P.begin(3);
-  P.setIntensity(1);
+  P.setIntensity(DISPLAY_INTENSITY);
 
   // DEFINE INITIAL ZONES (Page 1)
   P.setZone(0, 2, 4);
@@ -194,9 +213,21 @@ void setup()
 
   mx = P.getGraphicObject();
 
+  WiFi.setHostname(MDNS_HOSTNAME);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED)
     delay(100);
+  Serial.print("WiFi connected. IP: ");
+  Serial.println(WiFi.localIP());
+  if (!MDNS.begin(MDNS_HOSTNAME))
+    Serial.println("mDNS start failed");
+  else
+  {
+    MDNS.addService("udp", "udp", CONTROL_UDP_PORT);
+    MDNS.addService("audio", "udp", AUDIO_UDP_PORT);
+  }
+  controlUdp.begin(CONTROL_UDP_PORT);
+  audioUdp.begin(AUDIO_UDP_PORT);
 
   initTime(NTP_SERVER, GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC);
   while (!getTimeState(500).valid)
@@ -216,6 +247,8 @@ void loop()
     lastWeatherCheck = nowMs;
   }
 
+  handleControlPackets(nowMs);
+  handleAudioPackets(nowMs);
   updatePageLogic(nowMs);
   updateDisplay(nowMs);
 }
@@ -244,6 +277,8 @@ void getWeatherData()
     weatherDesc = "No WiFi";
     weatherIconID = ICON_UNKNOWN;
     feelsLikeTemp = 0;
+    sunriseEpoch = 0;
+    sunsetEpoch = 0;
     return;
   }
 
@@ -253,6 +288,8 @@ void getWeatherData()
     int id = data.id;
     weatherDesc = data.desc;
     feelsLikeTemp = data.feelsLike;
+    sunriseEpoch = data.sunrise;
+    sunsetEpoch = data.sunset;
 
     if (id >= 200 && id <= 232)
       weatherIconID = ICON_THUNDERSTORM;
@@ -279,6 +316,8 @@ void getWeatherData()
   {
     weatherDesc = "No Data";
     weatherIconID = ICON_UNKNOWN;
+    sunriseEpoch = 0;
+    sunsetEpoch = 0;
   }
 }
 
@@ -348,7 +387,7 @@ void updatePageLogic(unsigned long nowMs)
   switch (currentPage)
   {
   case PAGE_CLOCK:
-    if (duration > 50000)
+    if (duration > CLOCK_PAGE_DURATION_MS)
     {
       currentPage = TRANS_TO_WEATHER;
       pageTimer = nowMs;
@@ -357,7 +396,7 @@ void updatePageLogic(unsigned long nowMs)
     break;
 
   case TRANS_TO_WEATHER:
-    if (duration > 600)
+    if (duration > PAGE_TRANSITION_MS)
     {
       currentPage = PAGE_WEATHER;
       pageTimer = nowMs;
@@ -366,7 +405,45 @@ void updatePageLogic(unsigned long nowMs)
     break;
 
   case PAGE_WEATHER:
-    if (duration > 10000)
+    if (duration > WEATHER_PAGE_DURATION_MS)
+    {
+      currentPage = TRANS_TO_SUN;
+      pageTimer = nowMs;
+      P.displayClear();
+    }
+    break;
+
+  case TRANS_TO_SUN:
+    if (duration > PAGE_TRANSITION_MS)
+    {
+      currentPage = PAGE_SUN;
+      pageTimer = nowMs;
+      triggerZoneSetup = true;
+      P.displayClear();
+    }
+    break;
+
+  case PAGE_SUN:
+    if (duration > SUN_PAGE_DURATION_MS)
+    {
+      currentPage = TRANS_TO_SCOPE;
+      pageTimer = nowMs;
+      P.displayClear();
+    }
+    break;
+
+  case TRANS_TO_SCOPE:
+    if (duration > PAGE_TRANSITION_MS)
+    {
+      currentPage = PAGE_SCOPE;
+      pageTimer = nowMs;
+      triggerZoneSetup = true;
+      P.displayClear();
+    }
+    break;
+
+  case PAGE_SCOPE:
+    if (duration > SCOPE_PAGE_DURATION_MS)
     {
       currentPage = TRANS_TO_CLOCK;
       pageTimer = nowMs;
@@ -375,7 +452,7 @@ void updatePageLogic(unsigned long nowMs)
     break;
 
   case TRANS_TO_CLOCK:
-    if (duration > 600)
+    if (duration > PAGE_TRANSITION_MS)
     {
       currentPage = PAGE_CLOCK;
       pageTimer = nowMs;
@@ -425,17 +502,167 @@ void updatePageLogic(unsigned long nowMs)
       P.displayZoneText(1, weatherTextBuffer, PA_LEFT, 40, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
       P.displayZoneText(2, "", PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT); // Clear Zone 2 for manual
     }
+    else if (currentPage == PAGE_SUN)
+    {
+      // Use zones 0-3 for scrolling text
+      P.setZone(0, 0, 3);
+      P.setZone(1, 0, 0);
+      P.setZone(2, 0, 0);
+
+      P.setFont(0, Milford);
+      P.setTextAlignment(0, PA_LEFT);
+
+      SunRenderState sunState{};
+      sunState.sunrise = sunriseEpoch;
+      sunState.sunset = sunsetEpoch;
+      sunState.now = (unsigned long)time(nullptr);
+      SunInfo info = computeSunInfo(sunState);
+      if (info.hasData)
+      {
+        if (info.hours >= 1)
+          snprintf(sunTextBuffer, sizeof(sunTextBuffer), "%s in %d hours", info.targetIsSunrise ? "Sunrise" : "Sunset", info.hours);
+        else
+          snprintf(sunTextBuffer, sizeof(sunTextBuffer), "%s in %d minutes", info.targetIsSunrise ? "Sunrise" : "Sunset", info.minutes);
+      }
+      else
+        snprintf(sunTextBuffer, sizeof(sunTextBuffer), "No sun data");
+
+      P.displayZoneText(0, sunTextBuffer, PA_LEFT, 40, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+      P.displayZoneText(1, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
+      P.displayZoneText(2, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
+    }
+    else if (currentPage == PAGE_SCOPE)
+    {
+      P.setZone(0, 0, 0);
+      P.setZone(1, 0, 0);
+      P.setZone(2, 0, 0);
+      P.displayZoneText(0, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
+      P.displayZoneText(1, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
+      P.displayZoneText(2, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
+    }
 
     mx->control(MD_MAX72XX::INTENSITY, 1);
     triggerZoneSetup = false;
   }
 }
 
+void forcePage(PageState target, unsigned long nowMs, bool withTransition)
+{
+  if (target != PAGE_CLOCK && target != PAGE_WEATHER && target != PAGE_SUN && target != PAGE_SCOPE)
+    return;
+
+  PageState desired = target;
+  if (withTransition)
+  {
+    if (target == PAGE_CLOCK)
+      desired = TRANS_TO_CLOCK;
+    else if (target == PAGE_WEATHER)
+      desired = TRANS_TO_WEATHER;
+    else if (target == PAGE_SUN)
+      desired = TRANS_TO_SUN;
+    else
+      desired = TRANS_TO_SCOPE;
+  }
+
+  if (currentPage == desired || currentPage == target)
+    return;
+
+  currentPage = desired;
+  pageTimer = nowMs;
+  triggerZoneSetup = true;
+  P.displayClear();
+}
+
+void handleControlPackets(unsigned long nowMs)
+{
+  int packetSize = controlUdp.parsePacket();
+  while (packetSize > 0)
+  {
+    uint8_t buffer[4];
+    int len = controlUdp.read(buffer, sizeof(buffer));
+    if (len > 0)
+    {
+      uint8_t code = buffer[0];
+      Serial.printf("CTRL packet len=%d code=0x%02X\n", len, code);
+      if (code == CTRL_CODE_PAGE_CLOCK)
+      {
+        forcePage(PAGE_CLOCK, nowMs, true);
+      }
+      else if (code == CTRL_CODE_PAGE_WEATHER)
+      {
+        forcePage(PAGE_WEATHER, nowMs, true);
+      }
+      else if (code == CTRL_CODE_PAGE_SUN)
+      {
+        forcePage(PAGE_SUN, nowMs, true);
+      }
+      else if (code == CTRL_CODE_PAGE_SCOPE)
+      {
+        forcePage(PAGE_SCOPE, nowMs, true);
+      }
+      else if (code == CTRL_CODE_NEXT_PAGE)
+      {
+        PageState base = currentPage;
+        if (base == TRANS_TO_CLOCK)
+          base = PAGE_CLOCK;
+        else if (base == TRANS_TO_WEATHER)
+          base = PAGE_WEATHER;
+        else if (base == TRANS_TO_SUN)
+          base = PAGE_SUN;
+        else if (base == TRANS_TO_SCOPE)
+          base = PAGE_SCOPE;
+
+        PageState next = PAGE_CLOCK;
+        if (base == PAGE_CLOCK)
+          next = PAGE_WEATHER;
+        else if (base == PAGE_WEATHER)
+          next = PAGE_SUN;
+        else if (base == PAGE_SUN)
+          next = PAGE_SCOPE;
+        else if (base == PAGE_SCOPE)
+          next = PAGE_CLOCK;
+
+        forcePage(next, nowMs, true);
+      }
+    }
+    packetSize = controlUdp.parsePacket();
+  }
+}
+
+void handleAudioPackets(unsigned long nowMs)
+{
+  int packetSize = audioUdp.parsePacket();
+  while (packetSize > 0)
+  {
+    uint8_t buffer[128];
+    int len = audioUdp.read(buffer, sizeof(buffer));
+    if (len > 0)
+    {
+      for (int i = 0; i < TOTAL_WIDTH; i++)
+      {
+        int src = (i * len) / TOTAL_WIDTH;
+        if (src < 0)
+          src = 0;
+        if (src >= len)
+          src = len - 1;
+        scopeSamples[i] = buffer[src];
+      }
+      scopeHasData = true;
+      lastScopePacketMs = nowMs;
+    }
+    packetSize = audioUdp.parsePacket();
+  }
+
+  // Mark stale after 3 seconds of silence.
+  if (scopeHasData && (nowMs - lastScopePacketMs > 3000))
+    scopeHasData = false;
+}
+
 void updateDisplay(unsigned long nowMs)
 {
   memset(screenBuffer, 0, TOTAL_WIDTH);
 
-  if (currentPage == TRANS_TO_WEATHER || currentPage == TRANS_TO_CLOCK)
+  if (currentPage == TRANS_TO_WEATHER || currentPage == TRANS_TO_CLOCK || currentPage == TRANS_TO_SUN || currentPage == TRANS_TO_SCOPE)
   {
     drawGlitch();
     for (int i = 0; i < TOTAL_WIDTH; i++)
@@ -449,6 +676,11 @@ void updateDisplay(unsigned long nowMs)
     {
       if (P.getZoneStatus(1))
         P.displayReset(1);
+    }
+    else if (currentPage == PAGE_SUN)
+    {
+      if (P.getZoneStatus(0))
+        P.displayReset(0);
     }
   }
 
@@ -468,19 +700,6 @@ void updateDisplay(unsigned long nowMs)
       P.displayReset(0);
     }
     updateModeSwitcher(nowMs);
-    // if (currentMode == MODE_SCRAMBLE)
-    // {
-    //   currentFrame++;
-    //   bool allDone = true;
-    //   for (int i = 0; i < 4; i++)
-    //     if (currentFrame < resolveFrame[i])
-    //       allDone = false;
-    //   if (allDone)
-    //   {
-    //     currentMode = nextMode;
-    //     modeTimer = nowMs;
-    //   }
-    // }
 
     if (currentMode == MODE_SCRAMBLE)
     {
@@ -567,10 +786,7 @@ void updateDisplay(unsigned long nowMs)
     screenBuffer[17] |= isPM ? 0x51 : 0x55;
     screenBuffer[16] |= isPM ? 0x77 : 0x72;
 
-    mx->setColumn(17, screenBuffer[17]);
-    mx->setColumn(16, screenBuffer[16]);
-
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < 18; i++)
       mx->setColumn(i, screenBuffer[i]);
   }
 
@@ -589,6 +805,40 @@ void updateDisplay(unsigned long nowMs)
     for (int i = 32; i < 40; i++)
       mx->setColumn(i, screenBuffer[i]);
     for (int i = 0; i < 8; i++)
+      mx->setColumn(i, screenBuffer[i]);
+  }
+  else if (currentPage == PAGE_SUN)
+  {
+    SunRenderState sunState{};
+    sunState.sunrise = sunriseEpoch;
+    sunState.sunset = sunsetEpoch;
+    sunState.now = (unsigned long)time(nullptr);
+
+    SunInfo info = computeSunInfo(sunState);
+    if (info.hasData)
+    {
+      if (info.hours >= 1)
+        snprintf(sunTextBuffer, sizeof(sunTextBuffer), "%s in %d hours", info.targetIsSunrise ? "Sunrise" : "Sunset", info.hours);
+      else
+        snprintf(sunTextBuffer, sizeof(sunTextBuffer), "%s in %d minutes", info.targetIsSunrise ? "Sunrise" : "Sunset", info.minutes);
+    }
+    else
+      snprintf(sunTextBuffer, sizeof(sunTextBuffer), "No sun data");
+
+    P.setTextBuffer(0, sunTextBuffer);
+
+    drawSun(info, MOON_SUN, screenBuffer, TOTAL_WIDTH);
+    for (int i = 32; i < 40; i++)
+      mx->setColumn(i, screenBuffer[i]);
+  }
+  else if (currentPage == PAGE_SCOPE)
+  {
+    ScopeRenderState scopeState{};
+    scopeState.samples = scopeSamples;
+    scopeState.sampleCount = TOTAL_WIDTH;
+    scopeState.hasData = scopeHasData;
+    drawScope(scopeState, screenBuffer, TOTAL_WIDTH);
+    for (int i = 0; i < TOTAL_WIDTH; i++)
       mx->setColumn(i, screenBuffer[i]);
   }
 }
