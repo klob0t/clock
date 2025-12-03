@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/`: main loop (`main.cpp`) orchestrates Wi-Fi/NTP/weather, drives page state, and writes the 40-column `screenBuffer`; display helpers live in `display_clock.cpp`, `display_weather.cpp`, and `display_sun.cpp`.
+- `src/`: main loop (`main.cpp`) orchestrates Wi-Fi/NTP/weather, drives page state, and writes the 40-column `screenBuffer`; display helpers live in `display_clock.cpp`, `display_weather.cpp`, `display_sun.cpp`, and `display_scope.cpp`.
 - `include/`: matching headers, config (`config.h`), fonts, and render state structs. Keep secrets and tuning constants here.
 - `.pio/`: PlatformIO build output (do not commit). `.vscode/`: editor hints. `temp/`: scratch space.
 
@@ -19,7 +19,7 @@
 
 ## Testing Guidelines
 - No automated suite yet; run `pio run -e esp32` before pushing.
-- Hardware smoke test: verify time updates, weather fetch, page cycling (clock ? weather ? sun), UDP control hotkey works, matrix renders cleanly.
+- Hardware smoke test: verify time updates, weather fetch, page cycling (clock ? weather ? sun ? scope), UDP control hotkey works, matrix renders cleanly.
 - For new logic, add Unity tests under `test/` (`test_<feature>.cpp`) and run `pio test -e esp32`.
 - Simulate offline cases (Wi-Fi/API) to confirm graceful handling and retry intervals from `config.h`.
 
@@ -31,3 +31,9 @@
 - Keep credentials only in `include/config.h`; strip personal values before sharing.
 - Do not commit `.pio` artifacts or transient data; stash experiments in `temp/` and clean up.
 - Favor HTTPS for requests; handle HTTP failures with configured retries.
+
+## PC Senders & Tools
+- `send_keys_udp.py`: hotkey to control pages (`0x20` cycles through pages).
+- `send_audio_udp.py`: phase-aligned oscilloscope sender using soundcard loopback.
+- `send_spectrum_udp.py`: FFT-based spectrum sender with log bands, auto-scaling, and tilt compensation.
+- `sc_device_test.py` / `sc_loopback_test.py`: list devices and verify loopback audio capture.
