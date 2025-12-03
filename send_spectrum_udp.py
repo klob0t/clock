@@ -7,12 +7,12 @@ ESP_HOST = "myclock.local"   # set to ESP IP if mDNS fails
 ESP_PORT = 4211              # AUDIO_UDP_PORT on the ESP
 WIDTH = 40                   # columns of your LED matrix
 SAMPLE_RATE = 48000
-BLOCK = 1024                 # frames per FFT
+BLOCK = 512                  # frames per FFT
 FMIN = 40.0                  # min freq to consider (Hz)
 FMAX = None                  # max freq (None = Nyquist)
-FLOOR_DB = -90.0             # lower clamp for dB
-CEIL_DB = -30.0              # upper clamp for dB
-SMOOTH = 0.6                 # 0..1 smoothing for stability (higher = steadier)
+SMOOTH = 0.3                 # 0..1 smoothing for stability (higher = steadier)
+DYN_RANGE_DB = 40.0          # normalize to peak - this range
+FLOOR_DB_MIN = -90.0         # do not go below this floor
 
 esp_ip = socket.gethostbyname(ESP_HOST)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -61,9 +61,12 @@ with mic.recorder(samplerate=SAMPLE_RATE, channels=1) as rec:
                 # RMS to reduce bias toward wide bands
                 cols[i] = np.sqrt(np.mean(band * band))
 
-        # dB normalize
-        cols = 20.0 * np.log10(cols + 1e-6)
-        cols = (cols - FLOOR_DB) / (CEIL_DB - FLOOR_DB)
+        # dB normalize with dynamic peak tracking
+        cols_db = 20.0 * np.log10(cols + 1e-6)
+        peak_db = np.max(cols_db)
+        floor_db = max(peak_db - DYN_RANGE_DB, FLOOR_DB_MIN)
+        ceil_db = floor_db + DYN_RANGE_DB
+        cols = (cols_db - floor_db) / (ceil_db - floor_db)
         cols = np.clip(cols, 0.0, 1.0)
 
         # Smooth
@@ -76,4 +79,4 @@ with mic.recorder(samplerate=SAMPLE_RATE, channels=1) as rec:
 
         frame_count += 1
         if frame_count % 60 == 0:
-            print(f"[debug] min={out.min()} max={out.max()}")
+            print(f"[debug] min={out.min()} max={out.max()} peak_db={peak_db:.1f} floor_db={floor_db:.1f}")
