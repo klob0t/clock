@@ -173,6 +173,7 @@ char sunTextBuffer[60];
 uint8_t scopeSamples[TOTAL_WIDTH];
 bool scopeHasData = false;
 unsigned long lastScopePacketMs = 0;
+float scopeSmoothed[TOTAL_WIDTH];
 
 struct tm timeinfo;
 
@@ -426,7 +427,7 @@ void updatePageLogic(unsigned long nowMs)
   case PAGE_SUN:
     if (duration > SUN_PAGE_DURATION_MS)
     {
-      currentPage = TRANS_TO_SCOPE;
+      currentPage = TRANS_TO_CLOCK;
       pageTimer = nowMs;
       P.displayClear();
     }
@@ -443,12 +444,7 @@ void updatePageLogic(unsigned long nowMs)
     break;
 
   case PAGE_SCOPE:
-    if (duration > SCOPE_PAGE_DURATION_MS)
-    {
-      currentPage = TRANS_TO_CLOCK;
-      pageTimer = nowMs;
-      P.displayClear();
-    }
+    // Stay on scope until a control trigger moves it.
     break;
 
   case TRANS_TO_CLOCK:
@@ -645,7 +641,12 @@ void handleAudioPackets(unsigned long nowMs)
           src = 0;
         if (src >= len)
           src = len - 1;
-        scopeSamples[i] = buffer[src];
+        uint8_t val = buffer[src];
+        if (!scopeHasData)
+          scopeSmoothed[i] = val;
+        else
+          scopeSmoothed[i] = scopeSmoothed[i] * 0.7f + val * 0.3f;
+        scopeSamples[i] = val;
       }
       scopeHasData = true;
       lastScopePacketMs = nowMs;
@@ -834,7 +835,23 @@ void updateDisplay(unsigned long nowMs)
   else if (currentPage == PAGE_SCOPE)
   {
     ScopeRenderState scopeState{};
-    scopeState.samples = scopeSamples;
+    // Decay smoothed samples toward midline when idle
+    if (!scopeHasData)
+    {
+      for (int i = 0; i < TOTAL_WIDTH; i++)
+        scopeSmoothed[i] = scopeSmoothed[i] * 0.95f + 128.0f * 0.05f;
+    }
+    static uint8_t displaySamples[TOTAL_WIDTH];
+    for (int i = 0; i < TOTAL_WIDTH; i++)
+    {
+      float v = scopeSmoothed[i];
+      if (v < 0.0f)
+        v = 0.0f;
+      if (v > 255.0f)
+        v = 255.0f;
+      displaySamples[i] = (uint8_t)v;
+    }
+    scopeState.samples = displaySamples;
     scopeState.sampleCount = TOTAL_WIDTH;
     scopeState.hasData = scopeHasData;
     drawScope(scopeState, screenBuffer, TOTAL_WIDTH);
