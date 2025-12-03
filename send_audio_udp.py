@@ -7,7 +7,7 @@ ESP_HOST = "myclock.local"   # same mDNS name as your clock (or set to IP)
 ESP_PORT = 4211              # AUDIO_UDP_PORT on the ESP
 WIDTH = 40                   # columns of your LED matrix
 SAMPLE_RATE = 48000
-BLOCK = 1024                 # frames per read (smaller = snappier updates)
+BLOCK = 512                  # frames per read (smaller = snappier updates)
 
 # Resolve ESP once
 esp_ip = socket.gethostbyname(ESP_HOST)
