@@ -2,18 +2,18 @@ import socket
 import soundcard as sc
 import numpy as np
 
-# === CONFIG ===
-ESP_HOST = "myclock.local"   # same mDNS name as your clock (or set to IP)
+# Best-effort oscilloscope sender with pitch-follow alignment (rising zero-cross) and 2-cycle window.
+ESP_HOST = "myclock.local"   # set to ESP IP if mDNS is flaky
 ESP_PORT = 4211              # AUDIO_UDP_PORT on the ESP
 WIDTH = 40                   # columns of your LED matrix
 SAMPLE_RATE = 48000
-BLOCK = 512                  # frames per read (smaller = snappier updates)
+BLOCK = 512                # frames per read
+GAIN = 30                  # overall gain before mapping to 0..255
+CYCLES = 2                 # show ~2 periods when possible
 
-# Resolve ESP once
 esp_ip = socket.gethostbyname(ESP_HOST)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-# Pick default speaker and its loopback
 spk = sc.default_speaker()
 print("Default speaker: ", repr(spk.name))
 mic = sc.get_microphone(spk.name, include_loopback=True)
@@ -23,23 +23,44 @@ print(f"Streaming oscilloscope data to {esp_ip}:{ESP_PORT} (WIDTH={WIDTH})")
 with mic.recorder(samplerate=SAMPLE_RATE, channels=1) as rec:
     frame_count = 0
     while True:
-        # 1. grab audio chunk
         data = rec.record(numframes=BLOCK)    # shape: (BLOCK, 1)
-        samples = data[:, 0]                  # 1D float array [-1..1]
+        samples = data[:, 0]
 
-        # 2. downsample BLOCK -> WIDTH
-        idx = np.linspace(0, len(samples) - 1, WIDTH).astype(int)
-        slice_ = samples[idx]
+        # Remove DC
+        samples = samples - np.mean(samples)
 
-        # 3. normalize -1..1 -> 0..255 with higher gain
-        slice_ = slice_ * 20
+        # Trigger: find rising zero-crossing on a lightly smoothed detector
+        detector = np.convolve(samples, np.ones(8)/8.0, mode="same")
+        start_search = len(detector) // 4
+        end_search = len(detector) * 3 // 4
+        first = None
+        for i in range(start_search, end_search - 1):
+            if detector[i] <= 0.0 and detector[i + 1] > 0.0:
+                first = i + 1
+                break
+        if first is None:
+            first = start_search
+
+        # Estimate period from next crossing
+        second = None
+        for i in range(first + 1, end_search - 1):
+            if detector[i] <= 0.0 and detector[i + 1] > 0.0:
+                second = i + 1
+                break
+        period = (second - first) if second else BLOCK // 4
+        period = max(period, 32)           # clamp to a sane minimum
+        window_len = min(period * CYCLES, len(samples))
+
+        # Align and crop window
+        aligned = np.roll(samples, -first)[:window_len]
+
+        # Resample window to WIDTH
+        idx = np.linspace(0, len(aligned) - 1, WIDTH).astype(int)
+        slice_ = aligned[idx]
+
+        # Gain and map to 0..255
+        slice_ = slice_ * GAIN
         slice_ = ((slice_ + 1.0) * 0.5 * 255.0).clip(0, 255).astype(np.uint8)
 
-        # 4. send as 40-byte packet
         sock.sendto(slice_.tobytes(), (esp_ip, ESP_PORT))
 
-        # optional debug
-        frame_count += 1
-        if frame_count % 60 == 0:
-            level = float(np.mean(np.abs(slice_))) / 255.0
-            print(f"[debug] approx level={level:.3f} min={slice_.min()} max={slice_.max()}")

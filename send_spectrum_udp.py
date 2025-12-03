@@ -84,7 +84,3 @@ with mic.recorder(samplerate=SAMPLE_RATE, channels=1) as rec:
         out = (smoothed * 255.0).astype(np.uint8)
 
         sock.sendto(out.tobytes(), (esp_ip, ESP_PORT))
-
-        frame_count += 1
-        if frame_count % 60 == 0:
-            print(f"[debug] min={out.min()} max={out.max()} peak_db={peak_db:.1f} floor_db={floor_db:.1f}")
