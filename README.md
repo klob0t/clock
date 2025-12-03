@@ -23,21 +23,23 @@ Edit `include/config.h`:
 - `WIFI_SSID` / `WIFI_PASSWORD`
 - `OWM_API_KEY`, `LATITUDE`, `LONGITUDE`
 - `NTP_SERVER`, `GMT_OFFSET_SEC`, `DAYLIGHT_OFFSET_SEC`
+- Train filters: `TRAIN_STATION_ID` (RJW), `TRAIN_ORIGIN_ID` (KPB), `TRAIN_DEST_1/2` (CKR/BKS)
 - Page timings, control port/codes, mDNS hostname (`myclock` by default), display intensity
 
 ## Display Behavior
-- Page cycle: Clock  Weather  Sun  Clock (Scope is manual/sticky via control).
+- Page cycle: Clock -> Weather -> Sun -> Train -> Clock (Scope is manual/sticky via control).
 - Clock: 12h with blinking colon; bouncing dot on module 1; AM/PM glyph on module 2.
-- Weather: icon on module 5; scrolling description on modules 1; temperature on module 1.
-- Sun: sun/moon sprite on module 5; scrolling Milford text Sunrise/Sunset in X hours/minutes on modules 1.
+- Weather: icon on module 5; scrolling description on modules 1; temperature on module 1.
+- Sun: sun/moon sprite on module 5; scrolling Milford text of Sunrise/Sunset in X hours/minutes on modules 1.
+- Train: train icon on module 5; scrolling Milford text `KPB-CKR 5m` / `KPB-CKR 1h05m` using the next matching departure.
 - Scope: oscilloscope/spectrum plot across all columns. Feed samples or spectrum over UDP (see below). Scope stays until you trigger a page change.
 
 ## Controls (UDP + mDNS)
 - mDNS hostname: `myclock.local` (IP prints on boot).
 - Control UDP port: `CONTROL_UDP_PORT` (default 4210).
-- Control codes: `0x01` clock, `0x02` weather, `0x03` sun, `0x04` scope, `0x20` next page (cycles clockweathersunscopeclock when used repeatedly).
+- Control codes: `0x01` clock, `0x02` weather, `0x03` sun, `0x05` train, `0x04` scope, `0x20` next page (cycles clock->weather->sun->train->scope->clock when used repeatedly).
 - Example Python sender with hotkey in `send_keys_udp.py` (Ctrl+Alt+F10 sends `0x20`).
-- Audio UDP port: `AUDIO_UDP_PORT` (default 4211). Send 40 bytes of 0255 to draw columns; extra bytes are ignored.
+- Audio UDP port: `AUDIO_UDP_PORT` (default 4211). Send 40 bytes of 0x255 to draw columns; extra bytes are ignored.
 
 ## PC Senders
 - `send_audio_udp.py`: phase-aligned oscilloscope sender using soundcard loopback; maps audio to 40 bytes.

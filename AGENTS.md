@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/`: main loop (`main.cpp`) orchestrates Wi-Fi/NTP/weather, drives page state, and writes the 40-column `screenBuffer`; display helpers live in `display_clock.cpp`, `display_weather.cpp`, `display_sun.cpp`, and `display_scope.cpp`.
+- `src/`: main loop (`main.cpp`) orchestrates Wi-Fi/NTP/weather/train, drives page state, and writes the 40-column `screenBuffer`; display helpers live in `display_clock.cpp`, `display_weather.cpp`, `display_sun.cpp`, `display_scope.cpp`, and `display_train.cpp`.
 - `include/`: matching headers, config (`config.h`), fonts, and render state structs. Keep secrets and tuning constants here.
 - `.pio/`: PlatformIO build output (do not commit). `.vscode/`: editor hints. `temp/`: scratch space.
 
@@ -19,7 +19,7 @@
 
 ## Testing Guidelines
 - No automated suite yet; run `pio run -e esp32` before pushing.
-- Hardware smoke test: verify time updates, weather fetch, page cycling (clock ? weather ? sun ? scope), UDP control hotkey works, matrix renders cleanly.
+- Hardware smoke test: verify time updates, weather fetch, train fetch, page cycling (clock -> weather -> sun -> train; scope manual), UDP control hotkey works, matrix renders cleanly.
 - For new logic, add Unity tests under `test/` (`test_<feature>.cpp`) and run `pio test -e esp32`.
 - Simulate offline cases (Wi-Fi/API) to confirm graceful handling and retry intervals from `config.h`.
 

@@ -15,8 +15,6 @@
 #include "display_weather.h"
 #include "display_sun.h"
 #include "display_scope.h"
-#include "display_train.h"
-#include "train_service.h"
 #include "animations.h"
 
 // =============================================================================
@@ -53,8 +51,6 @@ enum PageState
   PAGE_WEATHER,
   TRANS_TO_SUN,
   PAGE_SUN,
-  TRANS_TO_TRAIN,
-  PAGE_TRAIN,
   TRANS_TO_SCOPE,
   PAGE_SCOPE,
   TRANS_TO_CLOCK
@@ -178,9 +174,6 @@ uint8_t scopeSamples[TOTAL_WIDTH];
 bool scopeHasData = false;
 unsigned long lastScopePacketMs = 0;
 float scopeSmoothed[TOTAL_WIDTH];
-unsigned long lastTrainCheck = 0;
-char trainTextBuffer[80];
-TrainEntry nextTrain;
 
 struct tm timeinfo;
 
@@ -195,7 +188,6 @@ int getMinute();
 int getSecond();
 int getHour();
 void getWeatherData();
-void getTrainSchedule();
 void drawGlitch();
 void startScrambleTransition(DateMode destination);
 void updateModeSwitcher(unsigned long nowMs);
@@ -243,9 +235,7 @@ void setup()
     delay(100);
 
   getWeatherData();
-  getTrainSchedule();
   pageTimer = millis();
-  lastTrainCheck = millis();
 }
 
 void loop()
@@ -256,12 +246,6 @@ void loop()
   {
     getWeatherData();
     lastWeatherCheck = nowMs;
-  }
-
-  if (nowMs - lastTrainCheck > TRAIN_CHECK_INTERVAL)
-  {
-    getTrainSchedule();
-    lastTrainCheck = nowMs;
   }
 
   handleControlPackets(nowMs);
@@ -336,19 +320,6 @@ void getWeatherData()
     sunriseEpoch = 0;
     sunsetEpoch = 0;
   }
-}
-
-void getTrainSchedule()
-{
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    nextTrain.valid = false;
-    return;
-  }
-
-  const String destFilters[] = {TRAIN_DEST_1, TRAIN_DEST_2};
-  TrainEntry entry = fetchNextTrain(TRAIN_STATION_ID, TRAIN_ORIGIN_ID, destFilters, 2);
-  nextTrain = entry;
 }
 
 void drawGlitch()
@@ -456,25 +427,6 @@ void updatePageLogic(unsigned long nowMs)
   case PAGE_SUN:
     if (duration > SUN_PAGE_DURATION_MS)
     {
-      currentPage = TRANS_TO_TRAIN;
-      pageTimer = nowMs;
-      P.displayClear();
-    }
-    break;
-
-  case TRANS_TO_TRAIN:
-    if (duration > PAGE_TRANSITION_MS)
-    {
-      currentPage = PAGE_TRAIN;
-      pageTimer = nowMs;
-      triggerZoneSetup = true;
-      P.displayClear();
-    }
-    break;
-
-  case PAGE_TRAIN:
-    if (duration > TRAIN_PAGE_DURATION_MS)
-    {
       currentPage = TRANS_TO_CLOCK;
       pageTimer = nowMs;
       P.displayClear();
@@ -575,36 +527,6 @@ void updatePageLogic(unsigned long nowMs)
       P.displayZoneText(1, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
       P.displayZoneText(2, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
     }
-    else if (currentPage == PAGE_TRAIN)
-    {
-      P.setZone(0, 0, 3);
-      P.setZone(1, 0, 0);
-      P.setZone(2, 0, 0);
-
-      P.setFont(0, Milford);
-      P.setTextAlignment(0, PA_LEFT);
-
-      if (nextTrain.valid)
-      {
-        unsigned long nowEpoch = (unsigned long)time(nullptr);
-        unsigned long diff = (nextTrain.departEpoch > nowEpoch) ? (nextTrain.departEpoch - nowEpoch) : 0;
-        unsigned long mins = diff / 60UL;
-        unsigned long hrs = mins / 60UL;
-        mins = mins % 60UL;
-        if (hrs > 0)
-          snprintf(trainTextBuffer, sizeof(trainTextBuffer), "%s-%s %luh%02lum", nextTrain.origin, nextTrain.destination, hrs, mins);
-        else
-          snprintf(trainTextBuffer, sizeof(trainTextBuffer), "%s-%s %lum", nextTrain.origin, nextTrain.destination, mins);
-      }
-      else
-      {
-        snprintf(trainTextBuffer, sizeof(trainTextBuffer), "No trains");
-      }
-
-      P.displayZoneText(0, trainTextBuffer, PA_LEFT, 40, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
-      P.displayZoneText(1, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
-      P.displayZoneText(2, "", PA_LEFT, 0, 0, PA_PRINT, PA_NO_EFFECT);
-    }
     else if (currentPage == PAGE_SCOPE)
     {
       P.setZone(0, 0, 0);
@@ -622,7 +544,7 @@ void updatePageLogic(unsigned long nowMs)
 
 void forcePage(PageState target, unsigned long nowMs, bool withTransition)
 {
-  if (target != PAGE_CLOCK && target != PAGE_WEATHER && target != PAGE_SUN && target != PAGE_TRAIN && target != PAGE_SCOPE)
+  if (target != PAGE_CLOCK && target != PAGE_WEATHER && target != PAGE_SUN && target != PAGE_SCOPE)
     return;
 
   PageState desired = target;
@@ -634,8 +556,6 @@ void forcePage(PageState target, unsigned long nowMs, bool withTransition)
       desired = TRANS_TO_WEATHER;
     else if (target == PAGE_SUN)
       desired = TRANS_TO_SUN;
-    else if (target == PAGE_TRAIN)
-      desired = TRANS_TO_TRAIN;
     else
       desired = TRANS_TO_SCOPE;
   }
@@ -672,10 +592,6 @@ void handleControlPackets(unsigned long nowMs)
       {
         forcePage(PAGE_SUN, nowMs, true);
       }
-      else if (code == CTRL_CODE_PAGE_TRAIN)
-      {
-        forcePage(PAGE_TRAIN, nowMs, true);
-      }
       else if (code == CTRL_CODE_PAGE_SCOPE)
       {
         forcePage(PAGE_SCOPE, nowMs, true);
@@ -689,8 +605,6 @@ void handleControlPackets(unsigned long nowMs)
           base = PAGE_WEATHER;
         else if (base == TRANS_TO_SUN)
           base = PAGE_SUN;
-        else if (base == TRANS_TO_TRAIN)
-          base = PAGE_TRAIN;
         else if (base == TRANS_TO_SCOPE)
           base = PAGE_SCOPE;
 
@@ -700,8 +614,6 @@ void handleControlPackets(unsigned long nowMs)
         else if (base == PAGE_WEATHER)
           next = PAGE_SUN;
         else if (base == PAGE_SUN)
-          next = PAGE_TRAIN;
-        else if (base == PAGE_TRAIN)
           next = PAGE_SCOPE;
         else if (base == PAGE_SCOPE)
           next = PAGE_CLOCK;
@@ -751,7 +663,7 @@ void updateDisplay(unsigned long nowMs)
 {
   memset(screenBuffer, 0, TOTAL_WIDTH);
 
-  if (currentPage == TRANS_TO_WEATHER || currentPage == TRANS_TO_CLOCK || currentPage == TRANS_TO_SUN || currentPage == TRANS_TO_TRAIN || currentPage == TRANS_TO_SCOPE)
+  if (currentPage == TRANS_TO_WEATHER || currentPage == TRANS_TO_CLOCK || currentPage == TRANS_TO_SUN || currentPage == TRANS_TO_SCOPE)
   {
     drawGlitch();
     for (int i = 0; i < TOTAL_WIDTH; i++)
@@ -767,11 +679,6 @@ void updateDisplay(unsigned long nowMs)
         P.displayReset(1);
     }
     else if (currentPage == PAGE_SUN)
-    {
-      if (P.getZoneStatus(0))
-        P.displayReset(0);
-    }
-    else if (currentPage == PAGE_TRAIN)
     {
       if (P.getZoneStatus(0))
         P.displayReset(0);
@@ -925,21 +832,6 @@ void updateDisplay(unsigned long nowMs)
     for (int i = 32; i < 40; i++)
       mx->setColumn(i, screenBuffer[i]);
   }
-  else if (currentPage == PAGE_TRAIN)
-  {
-    TrainRenderState trainState{};
-    trainState.hasData = nextTrain.valid;
-    trainState.nowEpoch = (unsigned long)time(nullptr);
-    if (nextTrain.valid)
-    {
-      snprintf(trainState.origin, sizeof(trainState.origin), "%s", nextTrain.origin);
-      snprintf(trainState.destination, sizeof(trainState.destination), "%s", nextTrain.destination);
-      trainState.departEpoch = nextTrain.departEpoch;
-    }
-    drawTrain(trainState, getTrainIcon(), screenBuffer, TOTAL_WIDTH);
-    for (int i = 32; i < 40; i++)
-      mx->setColumn(i, screenBuffer[i]);
-  }
   else if (currentPage == PAGE_SCOPE)
   {
     ScopeRenderState scopeState{};
@@ -967,3 +859,4 @@ void updateDisplay(unsigned long nowMs)
       mx->setColumn(i, screenBuffer[i]);
   }
 }
+

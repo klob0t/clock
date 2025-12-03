@@ -17,11 +17,13 @@ constexpr int DAYLIGHT_OFFSET_SEC = 0;
 //Weather polling
 constexpr unsigned long WEATHER_CHECK_INTERVAL = 600000;
 constexpr unsigned long WEATHER_RETRY_INTERVAL = 10000;
+constexpr unsigned long TRAIN_CHECK_INTERVAL = 60000;
 
 //Pages and transitions
 constexpr unsigned long CLOCK_PAGE_DURATION_MS = 50000;
 constexpr unsigned long WEATHER_PAGE_DURATION_MS = 10000;
 constexpr unsigned long SUN_PAGE_DURATION_MS = 10000;
+constexpr unsigned long TRAIN_PAGE_DURATION_MS = 10000;
 constexpr unsigned long SCOPE_PAGE_DURATION_MS = 10000;
 constexpr unsigned long PAGE_TRANSITION_MS = 600;
 
@@ -33,5 +35,12 @@ constexpr uint8_t CTRL_CODE_PAGE_CLOCK = 0x01;
 constexpr uint8_t CTRL_CODE_PAGE_WEATHER = 0x02;
 constexpr uint8_t CTRL_CODE_PAGE_SUN = 0x03;
 constexpr uint8_t CTRL_CODE_PAGE_SCOPE = 0x04;
+constexpr uint8_t CTRL_CODE_PAGE_TRAIN = 0x05;
 constexpr uint8_t CTRL_CODE_NEXT_PAGE = 0x20;
 constexpr char MDNS_HOSTNAME[] = "myclock";
+
+//Train schedule filters
+constexpr char TRAIN_STATION_ID[] = "RJW";
+constexpr char TRAIN_ORIGIN_ID[] = "KPB";
+constexpr char TRAIN_DEST_1[] = "CKR";
+constexpr char TRAIN_DEST_2[] = "BKS";
