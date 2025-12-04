@@ -722,14 +722,39 @@ void handleAudioPackets(unsigned long nowMs)
     int len = audioUdp.read(buffer, sizeof(buffer));
     if (len > 0)
     {
+      // Support packed nibbles (2 samples per byte) to shrink payload.
+      static uint8_t unpacked[TOTAL_WIDTH];
+      int srcCount = 0;
+      if (len * 2 <= TOTAL_WIDTH)
+      {
+        // Nibble-packed: each byte holds two 4-bit samples.
+        for (int i = 0; i < len; i++)
+        {
+          uint8_t b = buffer[i];
+          unpacked[srcCount++] = (b >> 4) * 17;    // scale 0-15 to ~0-255
+          if (srcCount < TOTAL_WIDTH)
+            unpacked[srcCount++] = (b & 0x0F) * 17;
+        }
+      }
+      else
+      {
+        // Raw bytes.
+        srcCount = len;
+        if (srcCount > TOTAL_WIDTH)
+          srcCount = TOTAL_WIDTH;
+        for (int i = 0; i < srcCount; i++)
+          unpacked[i] = buffer[i];
+      }
+
+      // Stretch/scale to TOTAL_WIDTH.
       for (int i = 0; i < TOTAL_WIDTH; i++)
       {
-        int src = (i * len) / TOTAL_WIDTH;
+        int src = (i * srcCount) / TOTAL_WIDTH;
         if (src < 0)
           src = 0;
-        if (src >= len)
-          src = len - 1;
-        uint8_t val = buffer[src];
+        if (src >= srcCount)
+          src = srcCount - 1;
+        uint8_t val = unpacked[src];
         if (!scopeHasData)
           scopeSmoothed[i] = val;
         else

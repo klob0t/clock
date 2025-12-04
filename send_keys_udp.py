@@ -1,4 +1,5 @@
 import socket
+import time
 from pynput import keyboard
 
 HOST = "myclock.local"  # set to IP if mDNS fails
@@ -10,8 +11,6 @@ COMBOS = {
     (keyboard.Key.ctrl_r, keyboard.Key.alt_gr, keyboard.Key.f10): b"\x20",
 }
 
-esp_ip = socket.gethostbyname(HOST)
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 pressed = set()
 
 def normalize(key):
@@ -19,11 +18,23 @@ def normalize(key):
         return key.char
     return key
 
+def send_payload(payload):
+    while True:
+        try:
+            addr = socket.getaddrinfo(HOST, PORT, socket.AF_INET, socket.SOCK_DGRAM)[0][-1]
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(payload, addr)
+            sock.close()
+            break
+        except OSError as exc:
+            print(f"Send retry ({exc}); waiting for {HOST} to resolve/respond...")
+            time.sleep(2)
+
 def check_combos():
     for combo, payload in COMBOS.items():
         if all(k in pressed for k in combo):
-            sock.sendto(payload, (esp_ip, PORT))
-            print(f"sent {payload.hex()} for combo {combo} -> {esp_ip}:{PORT}")
+            send_payload(payload)
+            print(f"sent {payload.hex()} for combo {combo} -> {HOST}:{PORT}")
 
 def on_press(key):
     k = normalize(key)

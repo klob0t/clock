@@ -5,30 +5,28 @@
 #include <Arduino.h>
 #include <time.h>
 
-static unsigned long parseUtcStringToEpoch(const char *ts)
+static unsigned long parseTimeToEpochToday(const char *ts)
 {
-  // Expected: "YYYY-MM-DD HH:MM:SS.xxx+00"
-  if (!ts || strlen(ts) < 19)
+  // Ignore date; parse only HH:MM:SS and treat as daily recurring.
+  int hour, minute, second;
+  if (!ts || sscanf(ts, "%*d-%*d-%*d %2d:%2d:%2d", &hour, &minute, &second) != 3)
     return 0;
 
-  int year, mon, day, hour, minute, second;
-  if (sscanf(ts, "%4d-%2d-%2d %2d:%2d:%2d", &year, &mon, &day, &hour, &minute, &second) != 6)
+  time_t now = time(nullptr);
+  if (now == (time_t)(-1))
     return 0;
-
-  struct tm t = {};
-  t.tm_year = year - 1900;
-  t.tm_mon = mon - 1;
-  t.tm_mday = day;
+  struct tm t = *localtime(&now);
   t.tm_hour = hour;
   t.tm_min = minute;
   t.tm_sec = second;
 
-  // mktime assumes the tm is in local time. Input is UTC, so add the local offset to get correct UTC epoch.
-  time_t localEpoch = mktime(&t);
-  if (localEpoch < 0)
-    return 0;
-  long offset = GMT_OFFSET_SEC + DAYLIGHT_OFFSET_SEC;
-  return (offset >= 0) ? (unsigned long)(localEpoch + offset) : (unsigned long)(localEpoch - (-offset));
+  time_t candidate = mktime(&t); // today at that time (local)
+  if (candidate <= now)
+  {
+    t.tm_mday += 1; // roll forward a day
+    candidate = mktime(&t);
+  }
+  return (candidate < 0) ? 0 : (unsigned long)candidate;
 }
 
 static bool isDestAllowed(const String &dest, const String *list, int count)
@@ -85,7 +83,7 @@ TrainEntry fetchNextTrain(const String &stationId,
   unsigned long bestEpoch = 0;
   int matchCount = 0;
   int originCount = 0;
-  int destCount = 0;
+  int destMatchCount = 0;
   int futureCount = 0;
 
   int logIdx = 0;
@@ -105,20 +103,22 @@ TrainEntry fetchNextTrain(const String &stationId,
     if (originFilter.equalsIgnoreCase(orig))
       originCount++;
     if (isDestAllowed(dest, destFilters, destCount))
-      destCount++;
+      destMatchCount++;
 
     if (!originFilter.equalsIgnoreCase(orig))
       continue;
     if (!isDestAllowed(dest, destFilters, destCount))
       continue;
 
-    unsigned long depEpoch = parseUtcStringToEpoch(depStr);
+    unsigned long depEpoch = parseTimeToEpochToday(depStr);
     if (depEpoch == 0)
     {
       Serial.printf("Train: parse fail for %s\n", depStr);
       continue;
     }
-    if (depEpoch == 0 || depEpoch <= nowEpoch)
+    if (depEpoch <= nowEpoch)
+      depEpoch += 86400UL; // treat schedule as daily; roll to tomorrow if already passed
+    if (depEpoch <= nowEpoch)
       continue;
     futureCount++;
 
@@ -134,7 +134,7 @@ TrainEntry fetchNextTrain(const String &stationId,
     }
   }
 
-  Serial.printf("Train: origin matches %d, dest matches %d, future matches %d\n", originCount, destCount, futureCount);
+  Serial.printf("Train: origin matches %d, dest matches %d, future matches %d\n", originCount, destMatchCount, futureCount);
   if (!result.valid)
   {
     Serial.printf("Train: no future matches (checked %d)\n", matchCount);

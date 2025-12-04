@@ -17,7 +17,7 @@ constexpr int DAYLIGHT_OFFSET_SEC = 0;
 //Weather polling
 constexpr unsigned long WEATHER_CHECK_INTERVAL = 600000;
 constexpr unsigned long WEATHER_RETRY_INTERVAL = 10000;
-constexpr unsigned long TRAIN_CHECK_INTERVAL = 60000;
+constexpr unsigned long TRAIN_CHECK_INTERVAL = 86400000; // once per day
 
 //Pages and transitions
 constexpr unsigned long CLOCK_PAGE_DURATION_MS = 50000;
